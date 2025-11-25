@@ -23,6 +23,11 @@ export class RaftNode implements IRaftNode {
   private leaderId: string | null = null;
   private electionTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
+  private lastApplied: number = -1;
+  private readonly peerStates: Map<
+    string,
+    { nextIndex: number; matchIndex: number }
+  > = new Map();
 
   constructor(
     private readonly store: IKVStore,
@@ -61,18 +66,93 @@ export class RaftNode implements IRaftNode {
     this.clearTimers();
   }
 
-  // TODO: Implement processAppendEntries - handle incoming AppendEntries RPCs
-  // Should handle: log consistency checks, log replication, commit updates
   processAppendEntries(request: AppendEntriesRequest): AppendEntriesResponse {
-    throw new Error("Method not implemented.");
+    // Reply false if term < currentTerm
+    if (request.term < this.currentTerm) {
+      return { term: this.currentTerm, success: false };
+    }
+
+    // Step down if there is a higher term or if not follower
+    if (
+      request.term > this.currentTerm ||
+      this.state !== RaftNodeState.FOLLOWER
+    ) {
+      this.becomeFollower(request.term);
+    }
+    this.leaderId = request.leaderId;
+    this.resetElectionTimer();
+
+    // Reply false if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
+    const prevEntry = this.logManager.getEntry(request.prevLogIndex);
+    const prevTerm = prevEntry ? prevEntry.term : 0;
+    if (request.prevLogIndex >= 0 && prevTerm !== request.prevLogTerm) {
+      return { term: this.currentTerm, success: false };
+    }
+
+    //  If an existing entry conflicts with a new one (same index but different terms), delete the existing entry and all that follow it
+    let insertIndex = request.prevLogIndex + 1;
+    for (const entry of request.entries) {
+      const existing = this.logManager.getEntry(insertIndex);
+      if (!existing || existing.term !== entry.term) {
+        this.logManager.truncateFrom(insertIndex);
+        this.logManager.appendEntry(entry);
+      }
+      insertIndex++;
+    }
+
+    //  If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
+    if (request.leaderCommit > this.logManager.getCommitIndex()) {
+      const newCommit = Math.min(
+        request.leaderCommit,
+        this.logManager.getLastIndex()
+      );
+      this.logManager.setCommitIndex(newCommit);
+      this.applyCommittedEntries();
+    }
+
+    return {
+      term: this.currentTerm,
+      success: true,
+      matchIndex: this.logManager.getLastIndex(),
+    };
   }
 
   processRequestVote(request: RequestVoteRequest): RequestVoteResponse {
-    throw new Error("Method not implemented.");
+    // Reply false if term < currentTerm
+    if (request.term < this.currentTerm) {
+      return { term: this.currentTerm, voteGranted: false };
+    }
+
+    // Step down if newer term discovered
+    if (request.term > this.currentTerm) {
+      this.becomeFollower(request.term);
+    }
+
+    const candidateUpToDate = this.isCandidateLogUpToDate(
+      request.lastLogIndex,
+      request.lastLogTerm
+    );
+
+    // If votedFor is null or candidateId, and candidate’s log is at least as up-to-date as receiver’s log, grant vote
+    const notVotedOrSame =
+      this.votedFor === null || this.votedFor === request.candidateId;
+
+    if (notVotedOrSame && candidateUpToDate) {
+      this.votedFor = request.candidateId;
+      this.resetElectionTimer();
+      return { term: this.currentTerm, voteGranted: true };
+    }
+
+    return { term: this.currentTerm, voteGranted: false };
   }
 
-  proposeEntry(operation: "set" | "del" | "append", key: string, value?: string): Promise<boolean> {
-    throw new Error("Method not implemented.");
+  // Client propose entry to be appended to the log
+  proposeEntry(
+    operation: "set" | "del" | "append",
+    key: string,
+    value?: string
+  ): Promise<boolean> {
+    return this.handlePropose(operation, key, value);
   }
 
   private becomeFollower(term: number): void {
@@ -100,23 +180,72 @@ export class RaftNode implements IRaftNode {
     this.leaderId = config.node.id;
     this.clearTimers();
     this.logger.info(`Became leader for term ${this.currentTerm}`);
+    this.initializePeerStates();
+    this.updateCommitIndex();
+    this.sendHeartbeats();
     this.startHeartbeat();
   }
 
   private startElection(): void {
-    // Implementation for starting election would go here
     this.resetElectionTimer();
+
+    // Send RequestVote RPCs to all other servers
+    const request: RequestVoteRequest = {
+      term: this.currentTerm,
+      candidateId: config.node.id,
+      lastLogIndex: this.logManager.getLastIndex(),
+      lastLogTerm: this.logManager.getLastTerm(),
+    };
+
+    // Votes for itself
+    let votes = 1;
+    const majority = Math.floor((config.cluster.peers.length + 1) / 2) + 1;
+
+    // Issues RequestVote RPCs
+    config.cluster.peers.forEach(async (peerUrl) => {
+      try {
+        const response = await this.peerClient.sendRequestVote(
+          `${peerUrl}/api`,
+          request
+        );
+
+        if (response.term > this.currentTerm) {
+          this.becomeFollower(response.term);
+          return;
+        }
+
+        if (response.voteGranted && this.state === RaftNodeState.CANDIDATE) {
+          votes++;
+          if (votes >= majority) {
+            this.becomeLeader();
+          }
+        }
+      } catch (error) {
+        this.logger.warn(
+          `RequestVote to ${peerUrl} failed: ${(error as Error).message}`
+        );
+      }
+    });
   }
 
   private startHeartbeat(): void {
     this.heartbeatTimer = setInterval(() => {
-      // Send heartbeats to all peers
       this.sendHeartbeats();
     }, config.raft.heartbeatInterval);
   }
 
   private sendHeartbeats(): void {
-    // Implementation for sending heartbeats would go here
+    if (!this.isLeader()) return;
+
+    config.cluster.peers.forEach(async (peerUrl) => {
+      try {
+        await this.replicateLogToPeer(peerUrl);
+      } catch (error) {
+        this.logger.warn(
+          `Heartbeat to ${peerUrl} failed: ${(error as Error).message}`
+        );
+      }
+    });
   }
 
   private resetElectionTimer(): void {
@@ -155,10 +284,10 @@ export class RaftNode implements IRaftNode {
   }
 
   private applyCommittedEntries(): void {
-    // Apply committed log entries to the state machine
     const commitIndex = this.logManager.getCommitIndex();
-    for (let i = 0; i <= commitIndex; i++) {
-      const entry = this.logManager.getEntry(i);
+    while (this.lastApplied < commitIndex) {
+      this.lastApplied++;
+      const entry = this.logManager.getEntry(this.lastApplied);
       if (entry) {
         this.applyLogEntry(entry);
       }
@@ -183,5 +312,136 @@ export class RaftNode implements IRaftNode {
         }
         break;
     }
+  }
+
+  private isCandidateLogUpToDate(
+    lastLogIndex: number,
+    lastLogTerm: number
+  ): boolean {
+    const myLastTerm = this.logManager.getLastTerm();
+    if (lastLogTerm !== myLastTerm) {
+      return lastLogTerm > myLastTerm;
+    }
+    return lastLogIndex >= this.logManager.getLastIndex();
+  }
+
+  private initializePeerStates(): void {
+    const nextIndex = this.logManager.getLastIndex() + 1;
+    config.cluster.peers.forEach((peer) => {
+      this.peerStates.set(peer, { nextIndex, matchIndex: -1 });
+    });
+  }
+
+  private async replicateLogToPeer(peerUrl: string): Promise<boolean> {
+    const state = this.peerStates.get(peerUrl);
+    if (!state) return false;
+
+    // Simple backoff loop using decrease nextIndex on failure
+    while (true) {
+      const nextIndex = state.nextIndex;
+      const prevLogIndex = nextIndex - 1;
+      const prevLogTerm =
+        prevLogIndex >= 0
+          ? this.logManager.getEntry(prevLogIndex)?.term || 0
+          : 0;
+      const entries = this.logManager.getEntriesFrom(nextIndex);
+
+      const request: AppendEntriesRequest = {
+        term: this.currentTerm,
+        leaderId: config.node.id,
+        prevLogIndex,
+        prevLogTerm,
+        entries,
+        leaderCommit: this.logManager.getCommitIndex(),
+      };
+
+      try {
+        const response = await this.peerClient.sendAppendEntries(
+          `${peerUrl}/api`,
+          request
+        );
+
+        if (response.term > this.currentTerm) {
+          this.becomeFollower(response.term);
+          return false;
+        }
+
+        if (response.success) {
+          const matchIndex = prevLogIndex + entries.length;
+          state.matchIndex = matchIndex;
+          state.nextIndex = matchIndex + 1;
+          this.updateCommitIndex();
+          return true;
+        }
+
+        // If follower log inconsistent, decrement nextIndex and retry
+        state.nextIndex = Math.max(0, state.nextIndex - 1);
+      } catch (error) {
+        this.logger.warn(
+          `Replicate to ${peerUrl} failed: ${(error as Error).message}`
+        );
+        return false;
+      }
+    }
+  }
+
+  // A log entry is committed once the leader that created it has replicated it on a majority of servers
+  private updateCommitIndex(): void {
+    const lastIndex = this.logManager.getLastIndex();
+    for (let idx = lastIndex; idx > this.logManager.getCommitIndex(); idx--) {
+      const replicated =
+        1 +
+        Array.from(this.peerStates.values()).filter((p) => p.matchIndex >= idx)
+          .length;
+      if (replicated >= this.getMajorityCount()) {
+        const entry = this.logManager.getEntry(idx);
+        if (entry && entry.term === this.currentTerm) {
+          this.logManager.setCommitIndex(idx);
+          this.applyCommittedEntries();
+          break;
+        }
+      }
+    }
+  }
+
+  private getMajorityCount(): number {
+    return Math.floor((config.cluster.peers.length + 1) / 2) + 1;
+  }
+
+  // Client propose entry to be appended to the log
+  private async handlePropose(
+    operation: "set" | "del" | "append",
+    key: string,
+    value?: string
+  ): Promise<boolean> {
+    if (!this.isLeader()) {
+      return false;
+    }
+
+    const command =
+      value === undefined ? { operation, key } : { operation, key, value };
+    const entry: LogEntry = {
+      index: this.logManager.getLastIndex() + 1,
+      term: this.currentTerm,
+      command,
+      timestamp: Date.now(),
+    };
+
+    this.logManager.appendEntry(entry);
+
+    await Promise.all(
+      config.cluster.peers.map(async (peerUrl) => {
+        try {
+          await this.replicateLogToPeer(peerUrl);
+        } catch (error) {
+          this.logger.warn(
+            `Replicate to ${peerUrl} failed: ${(error as Error).message}`
+          );
+        }
+      })
+    );
+
+    this.updateCommitIndex();
+    return this.logManager.getCommitIndex() >= entry.index;
   }
 }
