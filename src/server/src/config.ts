@@ -17,7 +17,7 @@ export interface Config {
 const config: Config = {
   node: {
     id: process.env.NODE_ID || "node-1",
-    host: process.env.NODE_HOST || "localhost",
+    host: process.env.NODE_HOST || "0.0.0.0",
     port: parseInt(process.env.NODE_PORT || "3000", 10),
   },
   cluster: {
