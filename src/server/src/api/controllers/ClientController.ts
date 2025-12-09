@@ -41,7 +41,7 @@ export class ClientController {
       return;
     }
 
-    if (!value) {
+    if (value === undefined) {
       this.sendError(res, "Value is required");
       return;
     }
@@ -52,6 +52,7 @@ export class ClientController {
       if (success) {
         const response: ClientResponse = {
           success: true,
+          value: "OK",
         };
         res.json(response);
       } else {
@@ -71,13 +72,15 @@ export class ClientController {
       return;
     }
 
+    const deletedValue = this.store.get(key);
+
     try {
       const success = await this.raftNode.proposeEntry('del', key);
       
       if (success) {
         const response: ClientResponse = {
           success: true,
-          value: 1,
+          value: deletedValue,
         };
         res.json(response);
       } else {
@@ -98,7 +101,7 @@ export class ClientController {
       return;
     }
 
-    if (!value) {
+    if (value === undefined) {
       this.sendError(res, "Value is required");
       return;
     }
@@ -107,10 +110,9 @@ export class ClientController {
       const success = await this.raftNode.proposeEntry('append', key, value);
       
       if (success) {
-        const newLength = this.store.strlen(key);
         const response: ClientResponse = {
           success: true,
-          value: newLength,
+          value: "OK",
         };
         res.json(response);
       } else {
