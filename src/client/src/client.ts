@@ -143,4 +143,8 @@ export class RaftClient {
 
         return statuses;
     }
+
+    async requestLog(): Promise<ApiResponse> {
+        return await this.executeRequest('GET', '/api/request_log');
+    }
 }

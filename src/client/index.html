@@ -58,6 +58,17 @@ http://localhost:3002</textarea>
                 </div>
                 <div id="clusterStatus" class="status-grid"></div>
             </div>
+
+            <!-- Request Log -->
+            <div class="card cluster-status">
+                <h2>Leader Logs</h2>
+                <button class="btn-primary" onclick="getRequestLog()">Get Logs</button>
+                <div class="loading" id="logLoading">
+                    <div class="spinner"></div>
+                    <p>Loading logs...</p>
+                </div>
+                <div id="requestLogResult" class="log-container"></div>
+            </div>
         </div>
     </div>
 

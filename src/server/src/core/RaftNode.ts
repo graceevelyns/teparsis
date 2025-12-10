@@ -444,4 +444,21 @@ export class RaftNode implements IRaftNode {
     this.updateCommitIndex();
     return this.logManager.getCommitIndex() >= entry.index;
   }
+
+  getLogs(): any[] {
+    const logs = [];
+    for (let i = 0; i <= this.logManager.getLastIndex(); i++) {
+      const entry = this.logManager.getEntry(i);
+      if (entry) {
+        logs.push({
+          index: entry.index,
+          term: entry.term,
+          command: entry.command,
+          timestamp: entry.timestamp,
+          isCommitted: i <= this.logManager.getCommitIndex(),
+        });
+      }
+    }
+    return logs;
+  }
 }
