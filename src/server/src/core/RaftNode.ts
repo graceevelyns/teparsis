@@ -481,7 +481,9 @@ export class RaftNode implements IRaftNode {
 
   getLogs(): any[] {
     const logs = [];
-    for (let i = 0; i <= this.logManager.getLastIndex(); i++) {
+    const commitIndex = this.logManager.getCommitIndex();
+    
+    for (let i = 0; i <= commitIndex; i++) {
       const entry = this.logManager.getEntry(i);
       if (entry) {
         logs.push({
@@ -489,7 +491,7 @@ export class RaftNode implements IRaftNode {
           term: entry.term,
           command: entry.command,
           timestamp: entry.timestamp,
-          isCommitted: i <= this.logManager.getCommitIndex(),
+          isCommitted: true,
         });
       }
     }
