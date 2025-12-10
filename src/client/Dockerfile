@@ -21,4 +21,4 @@ COPY package*.json ./
 COPY tsconfig.json ./
 RUN npm install
 EXPOSE 8080
-CMD ["sh", "-c", "npm run watch & npx http-server . -p 8080 -c-1"]
+CMD ["sh", "-c", "npx copyfiles -u 1 src/styles.css dist && npm run watch & npx http-server . -p 8080 -c-1"]
