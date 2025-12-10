@@ -43,11 +43,8 @@ async function getValue(): Promise<void> {
 
     try {
         const result = await client.get(key);
-        if (result.value === null) {
-            showResult('operationResult', 'info', `Key "${key}" not found`);
-        } else {
-            showResult('operationResult', 'success', `Value for "${key}":`, result.value);
-        }
+        const value = result.value ?? '';
+        showResult('operationResult', 'success', `Value for "${key}":`, value);
     } catch (error) {
         showResult('operationResult', 'error', 'Get failed: ' + (error as Error).message);
     }
@@ -85,8 +82,8 @@ async function deleteValue(): Promise<void> {
     }
 
     try {
-        await client.del(key);
-        showResult('operationResult', 'success', `Successfully deleted "${key}"`);
+        const result = await client.del(key);
+        showResult('operationResult', 'success', `Deleted "${key}". Returned value:`, result.value ?? '');
     } catch (error) {
         showResult('operationResult', 'error', 'Delete failed: ' + (error as Error).message);
     }
@@ -100,14 +97,23 @@ async function appendValue(): Promise<void> {
     const key = keyElement.value.trim();
     const value = valueElement.value;
     
-    if (!key || !value) {
-        showResult('operationResult', 'error', 'Please enter both key and value');
+    if (!key) {
+        showResult('operationResult', 'error', 'Please enter a key');
         return;
     }
 
     try {
         const result = await client.append(key, value);
-        showResult('operationResult', 'success', `Appended to "${key}". New length: ${result.value}`);
+        let lengthInfo: any = null;
+
+        try {
+            const lengthResult = await client.strlen(key);
+            lengthInfo = { length: lengthResult.value };
+        } catch (lengthError) {
+            lengthInfo = result.value ?? 'OK';
+        }
+
+        showResult('operationResult', 'success', `Appended to "${key}".`, lengthInfo);
     } catch (error) {
         showResult('operationResult', 'error', 'Append failed: ' + (error as Error).message);
     }
