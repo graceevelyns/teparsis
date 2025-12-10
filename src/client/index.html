@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Raft KV Store - Web Client</title>
+    <link rel="stylesheet" href="dist/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Raft KV Store</h1>
+            <p>Distributed Key-Value Store Web Client</p>
+        </header>
+
+        <div class="main-grid">
+            <!-- Configuration -->
+            <div class="card">
+                <h2>Configuration</h2>
+                <div class="form-group">
+                    <label for="nodeUrls">Cluster Nodes (one per line):</label>
+                    <textarea id="nodeUrls" placeholder="http://localhost:3000&#10;http://localhost:3001&#10;http://localhost:3002">http://localhost:3000
+http://localhost:3001
+http://localhost:3002</textarea>
+                </div>
+                <button class="btn-info" onclick="pingCluster()">Ping Cluster</button>
+                <div id="pingResult" class="result"></div>
+            </div>
+
+            <!-- Operations -->
+            <div class="card">
+                <h2>Operations</h2>
+                <div class="form-group">
+                    <label for="key">Key:</label>
+                    <input type="text" id="key" placeholder="Enter key name">
+                </div>
+                <div class="form-group">
+                    <label for="value">Value:</label>
+                    <input type="text" id="value" placeholder="Enter value">
+                </div>
+                <div class="button-group">
+                    <button class="btn-success" onclick="setValue()">Set</button>
+                    <button class="btn-primary" onclick="getValue()">Get</button>
+                    <button class="btn-warning" onclick="appendValue()">Append</button>
+                    <button class="btn-info" onclick="getLength()">Length</button>
+                    <button class="btn-danger" onclick="deleteValue()">Delete</button>
+                </div>
+                <div id="operationResult" class="result"></div>
+            </div>
+
+            <!-- Cluster Status -->
+            <div class="card cluster-status">
+                <h2>Cluster Status</h2>
+                <button class="btn-primary" onclick="getClusterStatus()">Refresh Status</button>
+                <div class="loading" id="statusLoading">
+                    <div class="spinner"></div>
+                    <p>Loading cluster status...</p>
+                </div>
+                <div id="clusterStatus" class="status-grid"></div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="dist/app.js"></script>
+</body>
+</html>

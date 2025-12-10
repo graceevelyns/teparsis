@@ -1,0 +1,101 @@
+services:
+  # Raft Node 1 (Leader candidate)
+  raft-node1:
+    build:
+      context: ./src/server
+      target: development
+    container_name: raft-node1
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ID=node1
+      - NODE_PORT=3000
+      - CLUSTER_PEERS=http://raft-node2:3000,http://raft-node3:3000
+    volumes:
+      # Mount source code
+      - ./src/server/src:/app/src
+      - ./src/server/tsconfig.json:/app/tsconfig.json
+      # Use named volume for node_modules to avoid conflicts
+      - raft-node1-modules:/app/node_modules
+    networks:
+      - raft-network
+    restart: unless-stopped
+
+  # Raft Node 2
+  raft-node2:
+    build:
+      context: ./src/server
+      target: development
+    container_name: raft-node2
+    ports:
+      - "3001:3000"
+    environment:
+      - NODE_ID=node2
+      - NODE_PORT=3000
+      - CLUSTER_PEERS=http://raft-node1:3000,http://raft-node3:3000
+    volumes:
+      # Mount source code
+      - ./src/server/src:/app/src
+      - ./src/server/tsconfig.json:/app/tsconfig.json
+      # Use named volume for node_modules to avoid conflicts
+      - raft-node2-modules:/app/node_modules
+    networks:
+      - raft-network
+    restart: unless-stopped
+
+  # Raft Node 3
+  raft-node3:
+    build:
+      context: ./src/server
+      target: development
+    container_name: raft-node3
+    ports:
+      - "3002:3000"
+    environment:
+      - NODE_ID=node3
+      - NODE_PORT=3000
+      - CLUSTER_PEERS=http://raft-node1:3000,http://raft-node2:3000
+    volumes:
+      # Mount source code
+      - ./src/server/src:/app/src
+      - ./src/server/tsconfig.json:/app/tsconfig.json
+      # Use named volume for node_modules to avoid conflicts
+      - raft-node3-modules:/app/node_modules
+    networks:
+      - raft-network
+    restart: unless-stopped
+
+  # Web Client
+  web-client:
+    build:
+      context: ./src/client
+      target: development
+    container_name: raft-web-client
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount source code
+      - ./src/client/src:/app/src
+      - ./src/client/index.html:/app/index.html
+      - ./src/client/tsconfig.json:/app/tsconfig.json
+      # Mount dist for compiled output
+      - ./src/client/dist:/app/dist
+      # Use named volume for node_modules to avoid conflicts
+      - web-client-modules:/app/node_modules
+    networks:
+      - raft-network
+    depends_on:
+      - raft-node1
+      - raft-node2
+      - raft-node3
+    restart: unless-stopped
+
+networks:
+  raft-network:
+    driver: bridge
+
+volumes:
+  raft-node1-modules:
+  raft-node2-modules:
+  raft-node3-modules:
+  web-client-modules:
