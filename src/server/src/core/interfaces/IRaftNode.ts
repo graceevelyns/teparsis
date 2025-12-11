@@ -34,4 +34,7 @@ export interface IRaftNode {
   
   // Propose new entry for consensus (only leader can call this)
   proposeEntry(operation: 'set' | 'del' | 'append', key: string, value?: string): Promise<boolean>;
+
+  // Get all logs from the node
+  getLogs(): any[];
 }

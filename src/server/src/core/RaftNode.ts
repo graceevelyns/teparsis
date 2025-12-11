@@ -69,6 +69,9 @@ export class RaftNode implements IRaftNode {
   processAppendEntries(request: AppendEntriesRequest): AppendEntriesResponse {
     // Reply false if term < currentTerm
     if (request.term < this.currentTerm) {
+      this.logger.warn(
+        `AppendEntries rejected: term ${request.term} < currentTerm ${this.currentTerm}`
+      );
       return { term: this.currentTerm, success: false };
     }
 
@@ -80,6 +83,13 @@ export class RaftNode implements IRaftNode {
       this.becomeFollower(request.term);
     }
     this.leaderId = request.leaderId;
+    
+    if (request.entries.length > 0) {
+      this.logger.info(
+        `Received AppendEntries from leader ${request.leaderId}, term ${request.term}, entries: ${request.entries.length}`
+      );
+    }
+    
     this.resetElectionTimer();
 
     // Reply false if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
@@ -120,6 +130,9 @@ export class RaftNode implements IRaftNode {
   processRequestVote(request: RequestVoteRequest): RequestVoteResponse {
     // Reply false if term < currentTerm
     if (request.term < this.currentTerm) {
+      this.logger.warn(
+        `RequestVote rejected: term ${request.term} < currentTerm ${this.currentTerm}`
+      );
       return { term: this.currentTerm, voteGranted: false };
     }
 
@@ -139,6 +152,9 @@ export class RaftNode implements IRaftNode {
 
     if (notVotedOrSame && candidateUpToDate) {
       this.votedFor = request.candidateId;
+      this.logger.info(
+        `Voted for candidate ${request.candidateId} in term ${request.term}`
+      );
       this.resetElectionTimer();
       return { term: this.currentTerm, voteGranted: true };
     }
@@ -296,6 +312,9 @@ export class RaftNode implements IRaftNode {
 
   private applyLogEntry(entry: LogEntry): void {
     const { operation, key, value } = entry.command;
+    this.logger.info(
+      `Applying log entry: ${operation} ${key}${value ? ' = ' + value : ''}`
+    );
 
     switch (operation) {
       case "set":
@@ -370,6 +389,13 @@ export class RaftNode implements IRaftNode {
           const matchIndex = prevLogIndex + entries.length;
           state.matchIndex = matchIndex;
           state.nextIndex = matchIndex + 1;
+          
+          if (entries.length > 0) {
+            this.logger.info(
+              `Replicated ${entries.length} entries to ${peerUrl}`
+            );
+          }
+          
           this.updateCommitIndex();
           return true;
         }
@@ -388,7 +414,8 @@ export class RaftNode implements IRaftNode {
   // A log entry is committed once the leader that created it has replicated it on a majority of servers
   private updateCommitIndex(): void {
     const lastIndex = this.logManager.getLastIndex();
-    for (let idx = lastIndex; idx > this.logManager.getCommitIndex(); idx--) {
+    const oldCommitIndex = this.logManager.getCommitIndex();
+    for (let idx = lastIndex; idx > oldCommitIndex; idx--) {
       const replicated =
         1 +
         Array.from(this.peerStates.values()).filter((p) => p.matchIndex >= idx)
@@ -397,6 +424,9 @@ export class RaftNode implements IRaftNode {
         const entry = this.logManager.getEntry(idx);
         if (entry && entry.term === this.currentTerm) {
           this.logManager.setCommitIndex(idx);
+          this.logger.info(
+            `Commit index updated: ${oldCommitIndex} -> ${idx}`
+          );
           this.applyCommittedEntries();
           break;
         }
@@ -415,6 +445,7 @@ export class RaftNode implements IRaftNode {
     value?: string
   ): Promise<boolean> {
     if (!this.isLeader()) {
+      this.logger.warn(`Propose rejected: not a leader`);
       return false;
     }
 
@@ -427,6 +458,9 @@ export class RaftNode implements IRaftNode {
       timestamp: Date.now(),
     };
 
+    this.logger.info(
+      `Proposed entry: ${operation} ${key}${value ? ' = ' + value : ''}`
+    );
     this.logManager.appendEntry(entry);
 
     await Promise.all(
@@ -443,5 +477,24 @@ export class RaftNode implements IRaftNode {
 
     this.updateCommitIndex();
     return this.logManager.getCommitIndex() >= entry.index;
+  }
+
+  getLogs(): any[] {
+    const logs = [];
+    const commitIndex = this.logManager.getCommitIndex();
+    
+    for (let i = 0; i <= commitIndex; i++) {
+      const entry = this.logManager.getEntry(i);
+      if (entry) {
+        logs.push({
+          index: entry.index,
+          term: entry.term,
+          command: entry.command,
+          timestamp: entry.timestamp,
+          isCommitted: true,
+        });
+      }
+    }
+    return logs;
   }
 }

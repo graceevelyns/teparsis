@@ -159,6 +159,106 @@ export class ClientController {
     }
   };
 
+  execute = async (req: Request, res: Response): Promise<void> => {
+    if (!this.raftNode.isLeader()) {
+      this.redirectToLeader(res);
+      return;
+    }
+
+    const { operation, key, value } = req.body;
+
+    if (!operation || !key) {
+      this.sendError(res, "operation and key are required");
+      return;
+    }
+
+    try {
+      let result: any;
+
+      switch (operation.toLowerCase()) {
+        case "ping":
+          result = this.store.ping();
+          break;
+
+        case "get":
+          result = this.store.get(key);
+          break;
+
+        case "set":
+          if (value === undefined) {
+            this.sendError(res, "value is required for SET operation");
+            return;
+          }
+          const setSuccess = await this.raftNode.proposeEntry('set', key, value);
+          if (!setSuccess) {
+            this.sendError(res, "Failed to reach consensus");
+            return;
+          }
+          result = "OK";
+          break;
+
+        case "del":
+          const delValue = this.store.get(key);
+          const delSuccess = await this.raftNode.proposeEntry('del', key);
+          if (!delSuccess) {
+            this.sendError(res, "Failed to reach consensus");
+            return;
+          }
+          result = delValue;
+          break;
+
+        case "append":
+          if (value === undefined) {
+            this.sendError(res, "value is required for APPEND operation");
+            return;
+          }
+          const appendSuccess = await this.raftNode.proposeEntry('append', key, value);
+          if (!appendSuccess) {
+            this.sendError(res, "Failed to reach consensus");
+            return;
+          }
+          result = "OK";
+          break;
+
+        case "strlen":
+          result = this.store.strlen(key);
+          break;
+
+        default:
+          this.sendError(res, `Unknown operation: ${operation}`);
+          return;
+      }
+
+      const response: ClientResponse = {
+        success: true,
+        value: result,
+      };
+      res.json(response);
+    } catch (error) {
+      this.logger.error(`Error in EXECUTE operation (${operation})`, error as Error);
+      this.sendError(res, "Internal server error");
+    }
+  };
+
+  requestLog = (req: Request, res: Response): void => {
+    if (!this.raftNode.isLeader()) {
+      this.redirectToLeader(res);
+      return;
+    }
+
+    try {
+      const logs = this.raftNode.getLogs();
+      const response: ClientResponse = {
+        success: true,
+        value: logs,
+      };
+      res.json(response);
+    } catch (error) {
+      this.logger.error("Error in REQUEST_LOG operation", error as Error);
+      this.sendError(res, "Internal server error");
+    }
+  };
+
   private redirectToLeader(res: Response): void {
     const response: ClientResponse = {
       success: false,

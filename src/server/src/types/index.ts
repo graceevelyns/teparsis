@@ -57,7 +57,7 @@ export interface KVOperation {
 
 export interface ClientResponse {
   success: boolean;
-  value?: string | number | null;
+  value?: string | number | null | any;
   error?: string;
   isLeader?: boolean;
   leaderId?: string | null;

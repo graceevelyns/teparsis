@@ -18,6 +18,10 @@ export function createRoutes(handlers: RouteHandlers): Router {
   router.put("/kv/:key/append", handlers.clientController.append);
   router.get("/kv/:key/length", handlers.clientController.strlen);
 
+  // Unified client interfaces
+  router.post("/execute", handlers.clientController.execute);
+  router.get("/request_log", handlers.clientController.requestLog);
+
   // Raft protocol routes
   router.post("/raft/append-entries", handlers.raftController.appendEntries);
   router.post("/raft/request-vote", handlers.raftController.requestVote);
