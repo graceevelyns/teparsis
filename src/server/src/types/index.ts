@@ -4,14 +4,31 @@ export enum RaftNodeState {
   LEADER = "leader",
 }
 
+export enum ServerMode {
+  VOTER = "voter",
+  STAGING = "staging",
+}
+
+export interface ServerInfo {
+  id: string;
+  address: string;
+  mode: ServerMode;
+}
+
+export interface Configuration {
+  index: number;
+  servers: ServerInfo[];
+}
+
 export interface LogEntry {
   index: number;
   term: number;
-  command: {
+  command?: {
     operation: "set" | "del" | "append";
     key: string;
     value?: string;
   };
+  configuration?: Configuration;
   timestamp: number;
 }
 
@@ -61,4 +78,20 @@ export interface ClientResponse {
   error?: string;
   isLeader?: boolean;
   leaderId?: string | null;
+  leaderAddress?: string | null;
+}
+
+export interface AddVoterRequest {
+  id: string;
+  address: string;
+}
+
+export interface RemovePeerRequest {
+  id: string;
+}
+
+export interface MembershipChangeResponse {
+  success: boolean;
+  error?: string;
+  configuration?: Configuration;
 }

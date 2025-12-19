@@ -19,6 +19,8 @@ FROM node:20-alpine AS development
 WORKDIR /app
 COPY package*.json ./
 COPY tsconfig.json ./
+COPY generate-config.sh ./
+RUN chmod +x generate-config.sh
 RUN npm install
 EXPOSE 8080
-CMD ["sh", "-c", "npx copyfiles -u 1 src/styles.css dist && npm run watch & npx http-server . -p 8080 -c-1"]
+CMD ["sh", "-c", "./generate-config.sh && npx copyfiles -u 1 src/styles.css dist && npm run watch & npx http-server . -p 8080 -c-1"]

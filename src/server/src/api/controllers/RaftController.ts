@@ -39,6 +39,7 @@ export class RaftController {
         isLeader: this.raftNode.isLeader(),
         leaderId: this.raftNode.getLeaderId(),
         votedFor: this.raftNode.getVotedFor(),
+        isActive: this.raftNode.getIsActive(),
       };
       res.json(status);
     } catch (error) {

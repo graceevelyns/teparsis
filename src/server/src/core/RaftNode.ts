@@ -5,6 +5,9 @@ import {
   RequestVoteRequest,
   RequestVoteResponse,
   LogEntry,
+  Configuration,
+  ServerInfo,
+  ServerMode,
 } from "../types";
 import { IRaftNode } from "./interfaces/IRaftNode";
 import { IKVStore } from "../store/IKVStore";
@@ -29,12 +32,42 @@ export class RaftNode implements IRaftNode {
     { nextIndex: number; matchIndex: number }
   > = new Map();
 
+  // Node activation state (local only, not replicated)
+  private isActive: boolean = true;
+
+  // Configuration tracking
+  private committedConfiguration: Configuration;
+  private latestConfiguration: Configuration;
+  private pendingConfigurationChange: boolean = false;
+
   constructor(
     private readonly store: IKVStore,
     private readonly logManager: ILogManager,
     private readonly peerClient: IPeerClient,
     private readonly logger: Logger
-  ) {}
+  ) {
+    const initialServers: ServerInfo[] = [
+      {
+        id: config.node.id,
+        address: `http://${config.node.host}:${config.node.port}`,
+        mode: ServerMode.VOTER,
+      },
+      ...config.cluster.peers.map((peerUrl, idx) => ({
+        id: config.cluster.peersIds[idx],
+        address: peerUrl,
+        mode: ServerMode.VOTER,
+      })),
+    ];
+
+    this.committedConfiguration = {
+      index: 0,
+      servers: initialServers,
+    };
+    this.latestConfiguration = {
+      index: 0,
+      servers: initialServers,
+    };
+  }
 
   getState(): RaftNodeState {
     return this.state;
@@ -52,13 +85,35 @@ export class RaftNode implements IRaftNode {
     return this.leaderId;
   }
 
+  getLeaderAddress(): string | null {
+    if (!this.leaderId) {
+      return null;
+    }
+
+    const leaderServer = this.latestConfiguration.servers.find(
+      (s) => s.id === this.leaderId
+    );
+
+    return leaderServer ? `http://localhost:${leaderServer.id}` : null;
+  }
+
   isLeader(): boolean {
     return this.state === RaftNodeState.LEADER;
   }
 
+  getIsActive(): boolean {
+    return this.isActive;
+  }
+
   start(): void {
     this.logger.info(`Starting Raft node ${config.node.id}`);
+
     this.becomeFollower(0);
+    if (!config.node.initialActive) {
+      this.logger.info(
+        `Node ${config.node.id} is initially inactive, not starting Raft operations`
+      );
+    }
   }
 
   stop(): void {
@@ -67,6 +122,12 @@ export class RaftNode implements IRaftNode {
   }
 
   processAppendEntries(request: AppendEntriesRequest): AppendEntriesResponse {
+    // If node is inactive, simulate crash - return error
+    if (!this.isActive) {
+      // this.logger.warn("Node is inactive, rejecting AppendEntries");
+      return { term: -1, success: false };
+    }
+
     // Reply false if term < currentTerm
     if (request.term < this.currentTerm) {
       this.logger.warn(
@@ -83,13 +144,13 @@ export class RaftNode implements IRaftNode {
       this.becomeFollower(request.term);
     }
     this.leaderId = request.leaderId;
-    
+
     if (request.entries.length > 0) {
       this.logger.info(
         `Received AppendEntries from leader ${request.leaderId}, term ${request.term}, entries: ${request.entries.length}`
       );
     }
-    
+
     this.resetElectionTimer();
 
     // Reply false if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
@@ -104,8 +165,30 @@ export class RaftNode implements IRaftNode {
     for (const entry of request.entries) {
       const existing = this.logManager.getEntry(insertIndex);
       if (!existing || existing.term !== entry.term) {
-        this.logManager.truncateFrom(insertIndex);
+        // Truncating may remove configuration entries
+        const truncateIndex = insertIndex;
+        this.logManager.truncateFrom(truncateIndex);
+
+        // If truncation removed the latest configuration, find the new latest
+        if (this.latestConfiguration.index >= truncateIndex) {
+          this.latestConfiguration = this.findLatestConfigurationInLog();
+          this.logger.info(
+            `Configuration rolled back to index ${this.latestConfiguration.index} due to log truncation`
+          );
+        }
+
         this.logManager.appendEntry(entry);
+
+        // Apply configuration immediately if this is a configuration entry
+        if (entry.configuration) {
+          this.latestConfiguration = {
+            index: entry.index,
+            servers: entry.configuration.servers,
+          };
+          this.logger.info(
+            `Updated latest configuration at index ${entry.index}`
+          );
+        }
       }
       insertIndex++;
     }
@@ -128,6 +211,12 @@ export class RaftNode implements IRaftNode {
   }
 
   processRequestVote(request: RequestVoteRequest): RequestVoteResponse {
+    // If node is inactive, simulate crash - return error
+    if (!this.isActive) {
+      // this.logger.warn("Node is inactive, rejecting RequestVote");
+      return { term: -1, voteGranted: false };
+    }
+
     // Reply false if term < currentTerm
     if (request.term < this.currentTerm) {
       this.logger.warn(
@@ -215,15 +304,25 @@ export class RaftNode implements IRaftNode {
 
     // Votes for itself
     let votes = 1;
-    const majority = Math.floor((config.cluster.peers.length + 1) / 2) + 1;
+    const majority = this.getMajorityCount();
+
+    // Get voter addresses from configuration
+    const voterAddresses = this.getVoterAddresses().filter(
+      (addr) => addr !== `http://${config.node.host}:${config.node.port}`
+    );
 
     // Issues RequestVote RPCs
-    config.cluster.peers.forEach(async (peerUrl) => {
+    voterAddresses.forEach(async (peerUrl) => {
       try {
         const response = await this.peerClient.sendRequestVote(
           `${peerUrl}/api`,
           request
         );
+
+        if (response.term === -1) {
+          // Peer is inactive, treat as failure
+          return;
+        }
 
         if (response.term > this.currentTerm) {
           this.becomeFollower(response.term);
@@ -253,7 +352,12 @@ export class RaftNode implements IRaftNode {
   private sendHeartbeats(): void {
     if (!this.isLeader()) return;
 
-    config.cluster.peers.forEach(async (peerUrl) => {
+    // Replicate to both voters and staging nodes
+    const replicationAddresses = this.getReplicationAddresses().filter(
+      (addr) => addr !== `http://${config.node.host}:${config.node.port}`
+    );
+
+    replicationAddresses.forEach(async (peerUrl) => {
       try {
         await this.replicateLogToPeer(peerUrl);
       } catch (error) {
@@ -311,9 +415,25 @@ export class RaftNode implements IRaftNode {
   }
 
   private applyLogEntry(entry: LogEntry): void {
+    // Handle configuration changes
+    if (entry.configuration) {
+      this.committedConfiguration = {
+        index: entry.index,
+        servers: entry.configuration.servers,
+      };
+      this.pendingConfigurationChange = false;
+      this.logger.info(
+        `Committed configuration at index ${entry.index}: ${entry.configuration.servers.length} servers`
+      );
+      return;
+    }
+
+    // Handle data commands
+    if (!entry.command) return;
+
     const { operation, key, value } = entry.command;
     this.logger.info(
-      `Applying log entry: ${operation} ${key}${value ? ' = ' + value : ''}`
+      `Applying log entry: ${operation} ${key}${value ? " = " + value : ""}`
     );
 
     switch (operation) {
@@ -345,15 +465,27 @@ export class RaftNode implements IRaftNode {
   }
 
   private initializePeerStates(): void {
+    this.peerStates.clear();
+
     const nextIndex = this.logManager.getLastIndex() + 1;
-    config.cluster.peers.forEach((peer) => {
+    // Initialize peer states for both voters and staging nodes
+    const replicationAddresses = this.getReplicationAddresses().filter(
+      (addr) => addr !== `http://${config.node.host}:${config.node.port}`
+    );
+    replicationAddresses.forEach((peer) => {
       this.peerStates.set(peer, { nextIndex, matchIndex: -1 });
     });
   }
 
   private async replicateLogToPeer(peerUrl: string): Promise<boolean> {
-    const state = this.peerStates.get(peerUrl);
-    if (!state) return false;
+    let state = this.peerStates.get(peerUrl);
+    if (!state) {
+      // Initialize peer state if not found (handles dynamic configuration changes)
+      const nextIndex = this.logManager.getLastIndex() + 1;
+      state = { nextIndex, matchIndex: -1 };
+      this.peerStates.set(peerUrl, state);
+      this.logger.info(`Initialized peer state for ${peerUrl}`);
+    }
 
     // Simple backoff loop using decrease nextIndex on failure
     while (true) {
@@ -380,6 +512,11 @@ export class RaftNode implements IRaftNode {
           request
         );
 
+        if (response.term === -1) {
+          // Peer is inactive, treat as failure
+          return false;
+        }
+
         if (response.term > this.currentTerm) {
           this.becomeFollower(response.term);
           return false;
@@ -389,13 +526,13 @@ export class RaftNode implements IRaftNode {
           const matchIndex = prevLogIndex + entries.length;
           state.matchIndex = matchIndex;
           state.nextIndex = matchIndex + 1;
-          
+
           if (entries.length > 0) {
             this.logger.info(
               `Replicated ${entries.length} entries to ${peerUrl}`
             );
           }
-          
+
           this.updateCommitIndex();
           return true;
         }
@@ -403,9 +540,13 @@ export class RaftNode implements IRaftNode {
         // If follower log inconsistent, decrement nextIndex and retry
         state.nextIndex = Math.max(0, state.nextIndex - 1);
       } catch (error) {
-        this.logger.warn(
-          `Replicate to ${peerUrl} failed: ${(error as Error).message}`
-        );
+        const errorMsg = (error as Error).message;
+        // Use debug for timeout/connection errors to reduce log noise
+        if (errorMsg.includes("timeout") || errorMsg.includes("ECONNREFUSED")) {
+          this.logger.debug(`Replicate to ${peerUrl} failed: ${errorMsg}`);
+        } else {
+          this.logger.warn(`Replicate to ${peerUrl} failed: ${errorMsg}`);
+        }
         return false;
       }
     }
@@ -415,18 +556,20 @@ export class RaftNode implements IRaftNode {
   private updateCommitIndex(): void {
     const lastIndex = this.logManager.getLastIndex();
     const oldCommitIndex = this.logManager.getCommitIndex();
+
+    const voterAddresses = this.getVoterAddresses();
+
     for (let idx = lastIndex; idx > oldCommitIndex; idx--) {
       const replicated =
         1 +
-        Array.from(this.peerStates.values()).filter((p) => p.matchIndex >= idx)
-          .length;
+        Array.from(this.peerStates.entries())
+          .filter(([peerUrl, _]) => voterAddresses.includes(peerUrl))
+          .filter(([_, state]) => state.matchIndex >= idx).length;
       if (replicated >= this.getMajorityCount()) {
         const entry = this.logManager.getEntry(idx);
         if (entry && entry.term === this.currentTerm) {
           this.logManager.setCommitIndex(idx);
-          this.logger.info(
-            `Commit index updated: ${oldCommitIndex} -> ${idx}`
-          );
+          this.logger.info(`Commit index updated: ${oldCommitIndex} -> ${idx}`);
           this.applyCommittedEntries();
           break;
         }
@@ -435,7 +578,8 @@ export class RaftNode implements IRaftNode {
   }
 
   private getMajorityCount(): number {
-    return Math.floor((config.cluster.peers.length + 1) / 2) + 1;
+    const voterCount = this.getVoterCount();
+    return Math.floor(voterCount / 2) + 1;
   }
 
   // Client propose entry to be appended to the log
@@ -459,18 +603,29 @@ export class RaftNode implements IRaftNode {
     };
 
     this.logger.info(
-      `Proposed entry: ${operation} ${key}${value ? ' = ' + value : ''}`
+      `Proposed entry: ${operation} ${key}${value ? " = " + value : ""}`
     );
     this.logManager.appendEntry(entry);
 
+    // Replicate to both voters and staging nodes
+    const replicationAddresses = this.getReplicationAddresses().filter(
+      (addr) => addr !== `http://${config.node.host}:${config.node.port}`
+    );
+
     await Promise.all(
-      config.cluster.peers.map(async (peerUrl) => {
+      replicationAddresses.map(async (peerUrl) => {
         try {
           await this.replicateLogToPeer(peerUrl);
         } catch (error) {
-          this.logger.warn(
-            `Replicate to ${peerUrl} failed: ${(error as Error).message}`
-          );
+          const errorMsg = (error as Error).message;
+          if (
+            errorMsg.includes("timeout") ||
+            errorMsg.includes("ECONNREFUSED")
+          ) {
+            this.logger.debug(`Replicate to ${peerUrl} failed: ${errorMsg}`);
+          } else {
+            this.logger.warn(`Replicate to ${peerUrl} failed: ${errorMsg}`);
+          }
         }
       })
     );
@@ -482,7 +637,7 @@ export class RaftNode implements IRaftNode {
   getLogs(): any[] {
     const logs = [];
     const commitIndex = this.logManager.getCommitIndex();
-    
+
     for (let i = 0; i <= commitIndex; i++) {
       const entry = this.logManager.getEntry(i);
       if (entry) {
@@ -490,11 +645,402 @@ export class RaftNode implements IRaftNode {
           index: entry.index,
           term: entry.term,
           command: entry.command,
+          configuration: entry.configuration,
           timestamp: entry.timestamp,
           isCommitted: true,
         });
       }
     }
     return logs;
+  }
+
+  // Membership change operations
+
+  async addVoter(
+    id: string,
+    address: string
+  ): Promise<{
+    success: boolean;
+    error?: string;
+    configuration?: Configuration;
+  }> {
+
+    if (!this.isActive) {
+      return {
+        success: false,
+        error: "Node is unreachable",
+      };
+    }
+
+    if (!this.isLeader()) {
+      return {
+        success: false,
+        error: "Not the leader",
+      };
+    }
+
+    if (this.pendingConfigurationChange) {
+      return {
+        success: false,
+        error: "Another configuration change is pending",
+      };
+    }
+
+    // Check if server already exists
+    const existingServer = this.latestConfiguration.servers.find(
+      (s) => s.id === id
+    );
+
+    if (existingServer && existingServer.mode === ServerMode.VOTER) {
+      return {
+        success: true,
+        configuration: this.latestConfiguration,
+      };
+    }
+
+    // Create new configuration with the server as staging
+    const newServers: ServerInfo[] = this.latestConfiguration.servers
+      .filter((s) => s.id !== id)
+      .concat([
+        {
+          id,
+          address,
+          mode: ServerMode.STAGING,
+        },
+      ]);
+
+    const newConfiguration: Configuration = {
+      index: this.logManager.getLastIndex() + 1,
+      servers: newServers,
+    };
+
+    // Append configuration entry to log
+    const entry: LogEntry = {
+      index: newConfiguration.index,
+      term: this.currentTerm,
+      configuration: newConfiguration,
+      timestamp: Date.now(),
+    };
+
+    this.logger.info(`Adding voter ${address} as staging at index ${entry.index}`);
+    this.logManager.appendEntry(entry);
+    this.latestConfiguration = newConfiguration;
+    this.pendingConfigurationChange = true;
+
+    // Automatically restart the node being added (without resetting state)
+    try {
+      await this.peerClient.sendRestartNode(`${address}/api`, false);
+      this.logger.info(`Successfully restarted node ${id} at ${address}`);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to restart node ${id}: ${(error as Error).message}`
+      );
+    }
+
+    // Replicate to both voters and staging nodes
+    await Promise.all(
+      this.getReplicationAddresses().map(async (peerUrl) => {
+        if (peerUrl !== `http://${config.node.host}:${config.node.port}`) {
+          try {
+            await this.replicateLogToPeer(peerUrl);
+          } catch (error) {
+            const errorMsg = (error as Error).message;
+            if (
+              errorMsg.includes("timeout") ||
+              errorMsg.includes("ECONNREFUSED")
+            ) {
+              this.logger.debug(`Replicate to ${peerUrl} failed: ${errorMsg}`);
+            } else {
+              this.logger.warn(`Replicate to ${peerUrl} failed: ${errorMsg}`);
+            }
+          }
+        }
+      })
+    );
+
+    this.updateCommitIndex();
+
+    // Check if we should promote staging to voter
+    this.checkAndPromoteStagingServers();
+
+    return {
+      success: true,
+      configuration: newConfiguration,
+    };
+  }
+
+  async removePeer(id: string): Promise<{
+    success: boolean;
+    error?: string;
+    configuration?: Configuration;
+  }> {
+
+    if (!this.isActive) {
+      return {
+        success: false,
+        error: "Node is unreachable",
+      };
+    }
+
+    if (!this.isLeader()) {
+      return {
+        success: false,
+        error: "Not the leader",
+      };
+    }
+
+    if (this.pendingConfigurationChange) {
+      return {
+        success: false,
+        error: "Another configuration change is pending",
+      };
+    }
+
+    // Check if server exists
+    const serverExists = this.latestConfiguration.servers.some(
+      (s) => s.id === id
+    );
+
+    if (!serverExists) {
+      return {
+        success: true,
+        configuration: this.latestConfiguration,
+      };
+    }
+
+    // Create new configuration without the server
+    const newServers = this.latestConfiguration.servers.filter(
+      (s) => s.id !== id
+    );
+
+    if (newServers.length === 0) {
+      return {
+        success: false,
+        error: "Cannot remove the last server",
+      };
+    }
+
+    const newConfiguration: Configuration = {
+      index: this.logManager.getLastIndex() + 1,
+      servers: newServers,
+    };
+
+    // Append configuration entry to log
+    const entry: LogEntry = {
+      index: newConfiguration.index,
+      term: this.currentTerm,
+      configuration: newConfiguration,
+      timestamp: Date.now(),
+    };
+
+    this.logger.info(`Removing peer ${id} at index ${entry.index}`);
+
+    // Automatically stop the removed node
+    const removedServer = this.latestConfiguration.servers.find(
+      (s) => s.id === id
+    );
+    if (removedServer) {
+      try {
+        await this.peerClient.sendStopNode(`${removedServer.address}/api`);
+        this.logger.info(
+          `Successfully stopped removed node ${id} at ${removedServer.address}`
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Failed to stop node ${id}: ${(error as Error).message}`
+        );
+        return {
+          success: false,
+          error: `Failed to stop removed node ${id}`,
+        };
+      }
+    }
+
+    this.logManager.appendEntry(entry);
+    this.latestConfiguration = newConfiguration;
+    this.pendingConfigurationChange = true;
+
+    // Replicate to both voters and staging nodes
+    await Promise.all(
+      this.getReplicationAddresses().map(async (peerUrl) => {
+        if (peerUrl !== `http://${config.node.host}:${config.node.port}`) {
+          try {
+            await this.replicateLogToPeer(peerUrl);
+          } catch (error) {
+            const errorMsg = (error as Error).message;
+            this.logger.warn(`Replicate to ${peerUrl} failed: ${errorMsg}`);
+          }
+        }
+      })
+    );
+
+    this.updateCommitIndex();
+
+    return {
+      success: true,
+      configuration: newConfiguration,
+    };
+  }
+
+  async getConfiguration(): Promise<Configuration> {
+    // Wait for any pending configuration to commit
+    if (this.pendingConfigurationChange) {
+      // Simple polling wait - in production, use a promise-based approach
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return this.committedConfiguration;
+  }
+
+  private findLatestConfigurationInLog(): Configuration {
+    for (let i = this.logManager.getLastIndex(); i >= 0; i--) {
+      const entry = this.logManager.getEntry(i);
+      if (entry && entry.configuration) {
+        return {
+          index: entry.index,
+          servers: entry.configuration.servers,
+        };
+      }
+    }
+    return this.committedConfiguration;
+  }
+
+  private getVoterAddresses(): string[] {
+    return this.latestConfiguration.servers
+      .filter((s) => s.mode === ServerMode.VOTER)
+      .map((s) => s.address);
+  }
+
+  private getReplicationAddresses(): string[] {
+    // Include both voters and staging nodes for log replication
+    return this.latestConfiguration.servers
+      .filter(
+        (s) => s.mode === ServerMode.VOTER || s.mode === ServerMode.STAGING
+      )
+      .map((s) => s.address);
+  }
+
+  private getVoterCount(): number {
+    return this.latestConfiguration.servers.filter(
+      (s) => s.mode === ServerMode.VOTER
+    ).length;
+  }
+
+  private checkAndPromoteStagingServers(): void {
+    if (!this.isLeader()) return;
+
+    const commitIndex = this.logManager.getCommitIndex();
+    const stagingServers = this.latestConfiguration.servers.filter(
+      (s) => s.mode === ServerMode.STAGING
+    );
+
+    for (const stagingServer of stagingServers) {
+      const peerState = this.peerStates.get(stagingServer.address);
+      if (!peerState) continue;
+
+      // Check if staging server has caught up (95% of commit index)
+      const catchUpThreshold = Math.floor(commitIndex * 0.95);
+      if (peerState.matchIndex >= catchUpThreshold) {
+        this.promoteStagingToVoter(stagingServer.id);
+      }
+    }
+  }
+
+  private async promoteStagingToVoter(id: string): Promise<void> {
+    if (this.pendingConfigurationChange) {
+      return;
+    }
+
+    const newServers = this.latestConfiguration.servers.map((s) =>
+      s.id === id ? { ...s, mode: ServerMode.VOTER } : s
+    );
+
+    const newConfiguration: Configuration = {
+      index: this.logManager.getLastIndex() + 1,
+      servers: newServers,
+    };
+
+    const entry: LogEntry = {
+      index: newConfiguration.index,
+      term: this.currentTerm,
+      configuration: newConfiguration,
+      timestamp: Date.now(),
+    };
+
+    this.logger.info(
+      `Promoting staging server ${id} to voter at index ${entry.index}`
+    );
+    this.logManager.appendEntry(entry);
+    this.latestConfiguration = newConfiguration;
+    this.pendingConfigurationChange = true;
+
+    // Replicate to both voters and staging nodes
+    await Promise.all(
+      this.getReplicationAddresses().map(async (peerUrl) => {
+        if (peerUrl !== `http://${config.node.host}:${config.node.port}`) {
+          try {
+            await this.replicateLogToPeer(peerUrl);
+          } catch (error) {
+            const errorMsg = (error as Error).message;
+            if (
+              errorMsg.includes("timeout") ||
+              errorMsg.includes("ECONNREFUSED")
+            ) {
+              this.logger.debug(`Replicate to ${peerUrl} failed: ${errorMsg}`);
+            } else {
+              this.logger.warn(`Replicate to ${peerUrl} failed: ${errorMsg}`);
+            }
+          }
+        }
+      })
+    );
+
+    this.updateCommitIndex();
+  }
+
+  // Node stop/restart (crash simulation)
+  async stopNode(): Promise<{ success: boolean; error?: string }> {
+    this.logger.info(`Stopping node ${config.node.id} (simulating crash)`);
+
+    if (!this.isActive) {
+      return { success: false, error: "Node is already stopped" };
+    }
+
+    // Simulate crash: stop all operations
+    this.isActive = false;
+    this.clearTimers();
+
+    this.logger.info(`Node stopped successfully`);
+    return { success: true };
+  }
+
+  async restartNode(
+    resetState: boolean = false
+  ): Promise<{ success: boolean; error?: string }> {
+    this.logger.info(
+      `Restarting node ${config.node.id} (resetState=${resetState})`
+    );
+
+    if (this.isActive) {
+      return { success: false, error: "Node is already running" };
+    }
+
+    // Reactivate the node
+    this.isActive = true;
+
+    if (resetState) {
+      // Start from scratch (like a fresh boot)
+      this.logger.info(`Resetting node state to initial values`);
+      this.currentTerm = 0;
+      this.votedFor = null;
+      this.leaderId = null;
+      this.becomeFollower(0);
+    } else {
+      // Keep current state but resume as follower
+      this.logger.info(`Preserving node state, resuming as follower`);
+      this.becomeFollower(this.currentTerm);
+    }
+
+    this.logger.info(`Node restarted successfully`);
+    return { success: true };
   }
 }

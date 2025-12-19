@@ -22,6 +22,15 @@ export function createRoutes(handlers: RouteHandlers): Router {
   router.post("/execute", handlers.clientController.execute);
   router.get("/request_log", handlers.clientController.requestLog);
 
+  // Membership change routes
+  router.post("/add-voter", handlers.clientController.addVoter);
+  router.post("/remove-peer", handlers.clientController.removePeer);
+  router.get("/configuration", handlers.clientController.getConfiguration);
+
+  // Node stop/restart routes (crash simulation)
+  router.post("/stop-node", handlers.clientController.stopNode);
+  router.post("/restart-node", handlers.clientController.restartNode);
+
   // Raft protocol routes
   router.post("/raft/append-entries", handlers.raftController.appendEntries);
   router.post("/raft/request-vote", handlers.raftController.requestVote);
