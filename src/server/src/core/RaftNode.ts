@@ -294,15 +294,14 @@ export class RaftNode implements IRaftNode {
   triggerSnapshot(): boolean {
     const threshold = config.storage?.snapshotThreshold || 100;
     
-    // Check if we have enough committed entries to snapshot
+    // Check if we have at least one committed entry to snapshot
     const commitIndex = this.logManager.getCommitIndex();
     const firstIndex = this.logManager.getFirstIndex();
     const entriesCount = commitIndex - firstIndex + 1;
 
-    if (entriesCount < threshold / 2) {
-      this.logger.info(
-        `Snapshot not needed: only ${entriesCount} entries (threshold: ${threshold})`
-      );
+    // For manual trigger, only require at least 1 committed entry
+    if (commitIndex < 0) {
+      this.logger.info("Snapshot not needed: no committed entries");
       return false;
     }
 
@@ -314,7 +313,7 @@ export class RaftNode implements IRaftNode {
     this.logManager.compactLog(commitIndex);
 
     this.logger.info(
-      `Created snapshot at index ${snapshot.lastIncludedIndex}, compacted log`
+      `Created snapshot at index ${snapshot.lastIncludedIndex}, compacted log (${entriesCount} entries)`
     );
     return true;
   }
