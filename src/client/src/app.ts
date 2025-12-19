@@ -373,18 +373,27 @@ function buildLogTable(logs: any[]): string {
 
   const rowsHtml = logs
     .map((log) => {
-      const operation = log.command?.operation || 'Configuration Change';
-      const isTx = operation === 'transaction';
-      const key = isTx ? '-' : (log.command?.key || '-');
+      const operation =
+        log.command?.operation || (log.configuration ? "configuration" : "unknown");
+      const isTx = operation === "transaction";
+      const isConfig = operation === "configuration";
+      const key = isTx || isConfig ? "-" : log.command?.key || "-";
+      const txCommands = isTx
+        ? log.command?.commands || log.command?.value || []
+        : [];
       const value = isTx
-        ? (log.command?.commands || [])
+        ? txCommands
             .map((cmd: any) => {
-              const base = `${cmd.operation} ${cmd.key ?? '-'}`;
+              const base = `${cmd.operation} ${cmd.key ?? "-"}`;
               return cmd.value !== undefined ? `${base} = ${cmd.value}` : base;
             })
-            .join(' ; ')
-        : (log.command?.value ?? '-');
-      const committed = log.isCommitted ? '✓' : '✗';
+            .join(" ; ")
+        : isConfig
+        ? `${(log.configuration?.servers || []).length} servers`
+        : operation === "request_log"
+        ? "-"
+        : log.command?.value ?? "-";
+      const committed = log.isCommitted ? "✓" : "✗";
 
       return `<tr><td>${log.index}</td><td>${log.term}</td><td>${operation}</td><td>${key}</td><td>${value}</td><td class="committed">${committed}</td></tr>`;
     })

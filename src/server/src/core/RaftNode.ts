@@ -441,10 +441,7 @@ export class RaftNode implements IRaftNode {
     if (!entry.command) return;
 
     const { command } = entry;
-    const { operation, key, value } = command;
-    this.logger.info(
-      `Applying log entry: ${operation} ${key}${value ? " = " + value : ""}`
-    );
+    this.logger.info(`Applying log entry: ${this.describeCommand(command)}`);
 
     if (command.operation === "transaction") {
       command.commands.forEach((cmd) => this.applyWriteCommand(cmd));
@@ -621,10 +618,7 @@ export class RaftNode implements IRaftNode {
       timestamp: Date.now(),
     };
 
-    const { operation, key, value } = command;
-    this.logger.info(
-      `Proposed entry: ${operation} ${key}${value ? " = " + value : ""}`
-    );
+    this.logger.info(`Proposed entry: ${this.describeCommand(command)}`);
     this.logManager.appendEntry(entry);
 
     // Replicate to both voters and staging nodes
