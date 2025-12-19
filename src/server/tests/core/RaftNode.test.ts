@@ -828,8 +828,10 @@ describe("RaftNode", () => {
       expect(mockLogManager.appendEntry).toHaveBeenCalled();
       const appendedEntry = mockLogManager.appendEntry.mock.calls[0][0];
       expect(appendedEntry.command?.operation).toBe("set");
-      expect(appendedEntry.command?.key).toBe("key1");
-      expect(appendedEntry.command?.value).toBe("value1");
+      if (appendedEntry.command && "key" in appendedEntry.command) {
+        expect(appendedEntry.command.key).toBe("key1");
+        expect(appendedEntry.command.value).toBe("value1");
+      }
     });
 
     it("should replicate entry to peers", async () => {
@@ -847,7 +849,9 @@ describe("RaftNode", () => {
       expect(mockLogManager.appendEntry).toHaveBeenCalled();
       const appendedEntry = mockLogManager.appendEntry.mock.calls[0][0];
       expect(appendedEntry.command?.operation).toBe("del");
-      expect(appendedEntry.command?.value).toBeUndefined();
+      if (appendedEntry.command && "key" in appendedEntry.command) {
+        expect(appendedEntry.command.value).toBeUndefined();
+      }
     });
   });
 

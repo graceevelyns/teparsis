@@ -321,7 +321,10 @@ describe("LogManager", () => {
       expect(logManager.getLastIndex()).toBe(2);
       expect(logManager.getLastTerm()).toBe(3);
       expect(logManager.getEntry(2)?.term).toBe(3);
-      expect(logManager.getEntry(2)?.command?.value).toBe("4");
+      const entry = logManager.getEntry(2);
+      if (entry?.command && "value" in entry.command) {
+        expect(entry.command.value).toBe("4");
+      }
     });
 
     it("should maintain consistency after multiple operations", () => {
