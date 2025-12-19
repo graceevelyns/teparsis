@@ -7,13 +7,22 @@ export enum RaftNodeState {
 export interface LogEntry {
   index: number;
   term: number;
-  command: {
-    operation: "set" | "del" | "append";
-    key: string;
-    value?: string;
-  };
+  command: LogCommand;
   timestamp: number;
 }
+
+export type KVWriteCommand = {
+  operation: "set" | "del" | "append";
+  key: string;
+  value?: string;
+};
+
+export type LogCommand =
+  | KVWriteCommand
+  | {
+      operation: "transaction";
+      commands: KVWriteCommand[];
+    };
 
 export interface AppendEntriesRequest {
   term: number;

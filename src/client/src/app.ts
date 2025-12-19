@@ -1,4 +1,4 @@
-import { RaftClient, StatusResponse } from './client.js';
+import { RaftClient, StatusResponse, TransactionCommand } from './client.js';
 
 const client = new RaftClient();
 
@@ -119,6 +119,31 @@ async function appendValue(): Promise<void> {
     }
 }
 
+async function runTransaction(): Promise<void> {
+    const txElement = document.getElementById('transactionCommands') as HTMLTextAreaElement;
+    if (!txElement) return;
+
+    const raw = txElement.value.trim();
+    if (!raw) {
+        showResult('transactionResult', 'error', 'Please enter transaction commands in JSON format');
+        return;
+    }
+
+    try {
+        const commands = JSON.parse(raw) as TransactionCommand[];
+
+        if (!Array.isArray(commands) || commands.length === 0) {
+            showResult('transactionResult', 'error', 'Commands must be a non-empty JSON array');
+            return;
+        }
+
+        const result = await client.transaction(commands);
+        showResult('transactionResult', 'success', 'Transaction submitted', result.value ?? 'OK');
+    } catch (error) {
+        showResult('transactionResult', 'error', 'Transaction failed: ' + (error as Error).message);
+    }
+}
+
 async function getLength(): Promise<void> {
     const keyElement = document.getElementById('key') as HTMLInputElement;
     if (!keyElement) return;
@@ -190,19 +215,28 @@ async function getClusterStatus(): Promise<void> {
 (window as any).setValue = setValue;
 (window as any).deleteValue = deleteValue;
 (window as any).appendValue = appendValue;
+(window as any).runTransaction = runTransaction;
 (window as any).getLength = getLength;
 (window as any).getClusterStatus = getClusterStatus;
 
 function buildLogTable(logs: any[]): string {
-    const headerHtml = '<table class="log-table"><thead><tr><th>Index</th><th>Term</th><th>Operation</th><th>Key</th><th>Value</th><th>Committed</th></tr></thead><tbody>';
+    const headerHtml = '<table class="log-table"><thead><tr><th>Index</th><th>Term</th><th>Operation</th><th>Key</th><th>Value</th><th class="committed">Committed</th></tr></thead><tbody>';
     
     const rowsHtml = logs.map(log => {
         const operation = log.command?.operation || 'unknown';
-        const key = log.command?.key || '-';
-        const value = log.command?.value || '-';
+        const isTx = operation === 'transaction';
+        const key = isTx ? '-' : (log.command?.key || '-');
+        const value = isTx
+            ? (log.command?.commands || [])
+                .map((cmd: any) => {
+                    const base = `${cmd.operation} ${cmd.key ?? '-'}`;
+                    return cmd.value !== undefined ? `${base} = ${cmd.value}` : base;
+                })
+                .join(' ; ')
+            : (log.command?.value ?? '-');
         const committed = log.isCommitted ? '✓' : '✗';
         
-        return `<tr><td>${log.index}</td><td>${log.term}</td><td>${operation}</td><td>${key}</td><td>${value}</td><td class="center">${committed}</td></tr>`;
+        return `<tr><td>${log.index}</td><td>${log.term}</td><td>${operation}</td><td>${key}</td><td>${value}</td><td class="committed">${committed}</td></tr>`;
     }).join('');
     
     return headerHtml + rowsHtml + '</tbody></table>';

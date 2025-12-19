@@ -48,6 +48,17 @@ http://localhost:3002</textarea>
                 <div id="operationResult" class="result"></div>
             </div>
 
+            <!-- Transaction -->
+            <div class="card">
+                <h2>Transaction</h2>
+                <div class="form-group">
+                    <label for="transactionCommands">Commands (JSON array):</label>
+                    <textarea id="transactionCommands" rows="6" placeholder='[{"operation":"set","key":"a","value":"1"},{"operation":"append","key":"a","value":"2"}]'></textarea>
+                </div>
+                <button class="btn-success" onclick="runTransaction()">Run Transaction</button>
+                <div id="transactionResult" class="result"></div>
+            </div>
+
             <!-- Cluster Status -->
             <div class="card cluster-status">
                 <h2>Cluster Status</h2>

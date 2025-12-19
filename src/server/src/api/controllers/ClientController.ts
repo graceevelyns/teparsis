@@ -1,10 +1,19 @@
 import { Request, Response } from "express";
 import { RaftNode } from "../../core/RaftNode";
 import { IKVStore } from "../../store/IKVStore";
-import { ClientResponse } from "../../types";
+import { ClientResponse, KVWriteCommand } from "../../types";
 import { Logger } from "../../utils/Logger";
 
 export class ClientController {
+  private requestHistory: Array<{
+    index: number;
+    term: number;
+    command: any;
+    timestamp: number;
+    isCommitted: boolean;
+  }> = [];
+  private requestIndex = 0;
+
   constructor(
     private readonly raftNode: RaftNode,
     private readonly store: IKVStore,
@@ -25,6 +34,7 @@ export class ClientController {
         success: true,
         value: value,
       };
+      this.recordRequest("get", key, value, true);
       res.json(response);
     } catch (error) {
       this.logger.error("Error in GET operation", error as Error);
@@ -54,6 +64,7 @@ export class ClientController {
           success: true,
           value: "OK",
         };
+        this.recordRequest("set", key, value, true);
         res.json(response);
       } else {
         this.sendError(res, "Failed to reach consensus");
@@ -82,6 +93,7 @@ export class ClientController {
           success: true,
           value: deletedValue,
         };
+        this.recordRequest("del", key, deletedValue, true);
         res.json(response);
       } else {
         this.sendError(res, "Failed to reach consensus");
@@ -114,6 +126,7 @@ export class ClientController {
           success: true,
           value: "OK",
         };
+        this.recordRequest("append", key, value, true);
         res.json(response);
       } else {
         this.sendError(res, "Failed to reach consensus");
@@ -138,6 +151,7 @@ export class ClientController {
         success: true,
         value: length,
       };
+      this.recordRequest("strlen", key, length, true);
       res.json(response);
     } catch (error) {
       this.logger.error("Error in STRLEN operation", error as Error);
@@ -152,6 +166,7 @@ export class ClientController {
         success: true,
         value: pong,
       };
+      this.recordRequest("ping", undefined, pong, true);
       res.json(response);
     } catch (error) {
       this.logger.error("Error in PING operation", error as Error);
@@ -178,10 +193,12 @@ export class ClientController {
       switch (operation.toLowerCase()) {
         case "ping":
           result = this.store.ping();
+          this.recordRequest("ping", undefined, result, true);
           break;
 
         case "get":
           result = this.store.get(key);
+          this.recordRequest("get", key, result, true);
           break;
 
         case "set":
@@ -194,6 +211,7 @@ export class ClientController {
             this.sendError(res, "Failed to reach consensus");
             return;
           }
+          this.recordRequest("set", key, value, true);
           result = "OK";
           break;
 
@@ -204,6 +222,7 @@ export class ClientController {
             this.sendError(res, "Failed to reach consensus");
             return;
           }
+          this.recordRequest("del", key, delValue, true);
           result = delValue;
           break;
 
@@ -217,11 +236,13 @@ export class ClientController {
             this.sendError(res, "Failed to reach consensus");
             return;
           }
+          this.recordRequest("append", key, value, true);
           result = "OK";
           break;
 
         case "strlen":
           result = this.store.strlen(key);
+          this.recordRequest("strlen", key, result, true);
           break;
 
         default:
@@ -240,6 +261,139 @@ export class ClientController {
     }
   };
 
+  executeTransaction = async (req: Request, res: Response): Promise<void> => {
+    if (!this.raftNode.isLeader()) {
+      this.redirectToLeader(res);
+      return;
+    }
+
+    const { commands } = req.body;
+
+    if (!Array.isArray(commands) || commands.length === 0) {
+      this.sendError(res, "commands array is required");
+      return;
+    }
+
+    const parsedWrites: KVWriteCommand[] = [];
+    const parsedAll: Array<{
+      operation: "set" | "del" | "append" | "get" | "strlen";
+      key: string;
+      value?: string;
+    }> = [];
+
+    for (const raw of commands) {
+      const operation = typeof raw?.operation === "string" ? raw.operation.toLowerCase() : null;
+      const key = raw?.key;
+      const value = raw?.value;
+
+      if (
+        operation !== "set" &&
+        operation !== "del" &&
+        operation !== "append" &&
+        operation !== "get" &&
+        operation !== "strlen"
+      ) {
+        this.sendError(res, `Unsupported operation: ${operation}`);
+        return;
+      }
+
+      if (!key) {
+        this.sendError(res, "key is required for all commands");
+        return;
+      }
+
+      if ((operation === "set" || operation === "append") && value === undefined) {
+        this.sendError(res, `value is required for ${operation.toUpperCase()} operation`);
+        return;
+      }
+
+      parsedAll.push({ operation, key, value });
+      if (operation === "set" || operation === "del" || operation === "append") {
+        parsedWrites.push({ operation, key, value });
+      }
+    }
+
+    try {
+      const results = this.simulateTransaction(parsedAll);
+
+      if (parsedWrites.length === 0) {
+        const response: ClientResponse = {
+          success: true,
+          value: results,
+        };
+        this.recordRequest("transaction", undefined, parsedAll, true);
+        res.json(response);
+        return;
+      }
+
+      const success = await this.raftNode.proposeTransaction(parsedWrites);
+
+      if (!success) {
+        this.sendError(res, "Failed to reach consensus");
+        return;
+      }
+
+      const response: ClientResponse = {
+        success: true,
+        value: results,
+      };
+      this.recordRequest("transaction", undefined, parsedAll, true);
+      res.json(response);
+    } catch (error) {
+      this.logger.error("Error in transaction operation", error as Error);
+      this.sendError(res, "Internal server error");
+    }
+  };
+
+  private simulateTransaction(
+    commands: Array<{ operation: "set" | "del" | "append" | "get" | "strlen"; key: string; value?: string }>
+  ): any[] {
+    const DELETED = Symbol("deleted");
+    const buffer = new Map<string, string | typeof DELETED>();
+    const results: any[] = [];
+
+    const readValue = (key: string): string => {
+      if (buffer.has(key)) {
+        const value = buffer.get(key);
+        return value === DELETED ? "" : (value as string);
+      }
+      return this.store.get(key);
+    };
+
+    for (const cmd of commands) {
+      const current = readValue(cmd.key);
+
+      switch (cmd.operation) {
+        case "set": {
+          buffer.set(cmd.key, cmd.value ?? "");
+          results.push("OK");
+          break;
+        }
+        case "del": {
+          buffer.set(cmd.key, DELETED);
+          results.push(current);
+          break;
+        }
+        case "append": {
+          const newVal = current + (cmd.value ?? "");
+          buffer.set(cmd.key, newVal);
+          results.push(newVal);
+          break;
+        }
+        case "get": {
+          results.push(current);
+          break;
+        }
+        case "strlen": {
+          results.push(current.length);
+          break;
+        }
+      }
+    }
+
+    return results;
+  }
+
   requestLog = (req: Request, res: Response): void => {
     if (!this.raftNode.isLeader()) {
       this.redirectToLeader(res);
@@ -247,17 +401,33 @@ export class ClientController {
     }
 
     try {
-      const logs = this.raftNode.getLogs();
       const response: ClientResponse = {
         success: true,
-        value: logs,
+        value: this.requestHistory,
       };
+      this.recordRequest("request_log", undefined, this.requestHistory.length, true);
       res.json(response);
     } catch (error) {
       this.logger.error("Error in REQUEST_LOG operation", error as Error);
       this.sendError(res, "Internal server error");
     }
   };
+
+  private recordRequest(
+    operation: string,
+    key?: string,
+    value?: any,
+    isCommitted: boolean = true
+  ): void {
+    this.requestHistory.push({
+      index: this.requestIndex++,
+      term: this.raftNode.getCurrentTerm(),
+      command:
+        value === undefined ? { operation, key } : { operation, key, value },
+      timestamp: Date.now(),
+      isCommitted,
+    });
+  }
 
   private redirectToLeader(res: Response): void {
     const response: ClientResponse = {
