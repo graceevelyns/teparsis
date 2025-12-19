@@ -11,12 +11,16 @@ services:
       - NODE_ID=node1
       - NODE_PORT=3000
       - CLUSTER_PEERS=http://raft-node2:3000,http://raft-node3:3000
+      - DATA_DIR=/data
+      - SNAPSHOT_THRESHOLD=10
     volumes:
       # Mount source code
       - ./src/server/src:/app/src
       - ./src/server/tsconfig.json:/app/tsconfig.json
       # Use named volume for node_modules to avoid conflicts
       - raft-node1-modules:/app/node_modules
+      # Persistent data volume for logs, snapshots, and state
+      - raft-node1-data:/data
     networks:
       - raft-network
     restart: unless-stopped
@@ -33,12 +37,16 @@ services:
       - NODE_ID=node2
       - NODE_PORT=3000
       - CLUSTER_PEERS=http://raft-node1:3000,http://raft-node3:3000
+      - DATA_DIR=/data
+      - SNAPSHOT_THRESHOLD=10
     volumes:
       # Mount source code
       - ./src/server/src:/app/src
       - ./src/server/tsconfig.json:/app/tsconfig.json
       # Use named volume for node_modules to avoid conflicts
       - raft-node2-modules:/app/node_modules
+      # Persistent data volume for logs, snapshots, and state
+      - raft-node2-data:/data
     networks:
       - raft-network
     restart: unless-stopped
@@ -55,12 +63,16 @@ services:
       - NODE_ID=node3
       - NODE_PORT=3000
       - CLUSTER_PEERS=http://raft-node1:3000,http://raft-node2:3000
+      - DATA_DIR=/data
+      - SNAPSHOT_THRESHOLD=10
     volumes:
       # Mount source code
       - ./src/server/src:/app/src
       - ./src/server/tsconfig.json:/app/tsconfig.json
       # Use named volume for node_modules to avoid conflicts
       - raft-node3-modules:/app/node_modules
+      # Persistent data volume for logs, snapshots, and state
+      - raft-node3-data:/data
     networks:
       - raft-network
     restart: unless-stopped
@@ -99,3 +111,7 @@ volumes:
   raft-node2-modules:
   raft-node3-modules:
   web-client-modules:
+  raft-node1-data:
+  raft-node2-data:
+  raft-node3-data:
+

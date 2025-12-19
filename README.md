@@ -21,7 +21,7 @@
 | Membership Change  | blm selesai  |
 | Unit Testing (bonus)| blm selesai  |
 | Transaction (bonus) | blm selesai  |
-| Log Compaciton (bonus)| blm selesai  |
+| Log Compaction (bonus)| selesai  |
 
 ### tutorial lari
 
