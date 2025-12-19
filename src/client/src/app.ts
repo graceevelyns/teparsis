@@ -35,10 +35,7 @@ function updateNodeDropdown(): void {
   // Add options for each cluster node
   CLUSTER_NODES.forEach((node) => {
     const option = document.createElement("option");
-    option.value = `${node.id}|${node.address.replace(
-      "localhost",
-      "raft-node" + (parseInt(node.id) - 2999)
-    )}`;
+    option.value = `${node.id}|http://raft-node${parseInt(node.id)}:3000`;
     option.textContent = `Node ${node.id} (${node.address})`;
     nodeSelect.appendChild(option);
   });
@@ -76,6 +73,19 @@ async function pingCluster(): Promise<void> {
   } catch (error) {
     showResult(
       "pingResult",
+      "error",
+      "Ping failed: " + (error as Error).message
+    );
+  }
+}
+
+async function pingLeader(): Promise<void> {
+  try {
+    const result = await client.ping();
+    showResult("operationResult", "success", "Server responded!", result);
+  } catch (error) {
+    showResult(
+      "operationResult",
       "error",
       "Ping failed: " + (error as Error).message
     );
@@ -235,28 +245,15 @@ async function getClusterStatus(): Promise<void> {
   statusDiv.innerHTML = "";
 
   try {
-    // Get status for all nodes in fixed cluster
     const statuses: StatusResponse[] = await client.status();
-    // Add timeout to prevent hanging requests
-    // const controller = new AbortController();
-    // const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
-    // console.log("Fetching status from node:", node.address);
-    // const response = await fetch(`${node.address}/api/raft/status`, {
-    //   signal: controller.signal,
-    // });
-    // clearTimeout(timeoutId);
-
-    // const data = await response.json();
-    // statuses.push({
-    //   ...data,
-    //   nodeUrl: node.address,
-    // });
 
     const selectedNode = client.getSelectedNode();
 
     statusDiv.innerHTML = statuses
       .map((status: StatusResponse) => {
-        const state = (status.state || "unreachable").toLowerCase();
+        let state = (status.state || "unreachable").toLowerCase();
+        if (!status.isActive) state = "unreachable";
+
         const badgeClass = `badge-${state}`;
         const isSelected = selectedNode === status.nodeUrl;
         const selectedClass = isSelected ? "selected" : "";
@@ -264,23 +261,23 @@ async function getClusterStatus(): Promise<void> {
         let infoHtml = "";
         if (state !== "unreachable") {
           infoHtml = `
-                    <div class="node-info">
-                        <div><strong>Term:</strong> ${status.term}</div>
-                        <div><strong>Leader:</strong> ${
-                          status.isLeader ? "Yes" : "No"
-                        }</div>
-                        ${
-                          status.leaderId
-                            ? `<div><strong>Leader ID:</strong> ${status.leaderId}</div>`
-                            : ""
-                        }
-                        ${
-                          status.votedFor
-                            ? `<div><strong>Voted For:</strong> ${status.votedFor}</div>`
-                            : ""
-                        }
-                    </div>
-                `;
+            <div class="node-info">
+                <div><strong>Term:</strong> ${status.term}</div>
+                <div><strong>Leader:</strong> ${
+                  status.isLeader ? "Yes" : "No"
+                }</div>
+                ${
+                  status.leaderId
+                    ? `<div><strong>Leader ID:</strong> ${status.leaderId}</div>`
+                    : ""
+                }
+                ${
+                  status.votedFor
+                    ? `<div><strong>Voted For:</strong> ${status.votedFor}</div>`
+                    : ""
+                }
+            </div>
+        `;
         } else {
           infoHtml = `<div class="node-info"><div><strong>Error:</strong> ${
             status.error || "Unreachable"
@@ -291,7 +288,10 @@ async function getClusterStatus(): Promise<void> {
         const match = status.nodeUrl.match(/:(\d+)/);
         const nodeId = match ? match[1] : "";
 
-        const actionsHtml = `
+        const actionsHtml =
+          state === "unreachable"
+            ? ""
+            : `
                 <div class="node-actions">
                     <button class="btn-sm ${
                       isSelected ? "btn-success" : "btn-primary"
@@ -301,7 +301,7 @@ async function getClusterStatus(): Promise<void> {
                     ${
                       nodeId && state !== "unreachable"
                         ? `
-                        <button class="btn-sm btn-danger" onclick="removeNodeFromCluster('${status.nodeUrl}')">
+                        <button class="btn-sm btn-danger" onclick="removeNodeFromCluster('${nodeId}')">
                             Remove
                         </button>
                     `
@@ -313,8 +313,8 @@ async function getClusterStatus(): Promise<void> {
         return `
                 <div class="node-card ${state} ${selectedClass}">
                     <div class="node-header">
-                        <span class="node-id">${status.nodeUrl}</span>
-                        <span class="node-badge ${badgeClass}">${state}</span>
+                        <div class="node-id">${status.nodeUrl}</div>
+                        <div class="node-badge ${badgeClass}">${state}</div>
                     </div>
                     ${infoHtml}
                     ${actionsHtml}
@@ -333,6 +333,7 @@ async function getClusterStatus(): Promise<void> {
 
 // Make functions available globally for HTML onclick handlers
 (window as any).pingCluster = pingCluster;
+(window as any).pingLeader = pingLeader;
 (window as any).getValue = getValue;
 (window as any).setValue = setValue;
 (window as any).deleteValue = deleteValue;
@@ -346,7 +347,7 @@ function buildLogTable(logs: any[]): string {
 
   const rowsHtml = logs
     .map((log) => {
-      const operation = log.command?.operation || "unknown";
+      const operation = log.command?.operation || "Configuration Change";
       const key = log.command?.key || "-";
       const value = log.command?.value || "-";
       const committed = log.isCommitted ? "✓" : "✗";
@@ -410,25 +411,20 @@ function selectNode(nodeUrl: string): void {
 
 (window as any).selectNode = selectNode;
 
-async function removeNodeFromCluster(nodeUrl: string): Promise<void> {
-  if (
-    !confirm(`Are you sure you want to remove ${nodeUrl} from the cluster?`)
-  ) {
+async function removeNodeFromCluster(nodeId: string): Promise<void> {
+  if (!confirm(`Are you sure you want to remove ${nodeId} from the cluster?`)) {
     return;
   }
 
   try {
     // Extract node ID from URL (assuming format like http://localhost:3001)
-    const match = nodeUrl.match(/:(\d+)/);
-    const nodeId = match ? `node-${match[1]}` : nodeUrl;
-
     const result = await client.removePeer(nodeId);
 
     if (result.success !== false) {
       showResult(
         "operationResult",
         "success",
-        `Successfully removed ${nodeUrl} from cluster`
+        `Successfully removed ${nodeId} from cluster`
       );
       // Refresh cluster status
       setTimeout(() => getClusterStatus(), 1000);

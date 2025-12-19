@@ -46,8 +46,6 @@ export class RaftNode implements IRaftNode {
     private readonly peerClient: IPeerClient,
     private readonly logger: Logger
   ) {
-    this.isActive = config.node.initialActive;
-
     const initialServers: ServerInfo[] = [
       {
         id: config.node.id,
@@ -111,11 +109,10 @@ export class RaftNode implements IRaftNode {
     this.logger.info(`Starting Raft node ${config.node.id}`);
 
     this.becomeFollower(0);
-    if (!config.node.initialActive)  {
+    if (!config.node.initialActive) {
       this.logger.info(
         `Node ${config.node.id} is initially inactive, not starting Raft operations`
       );
-      this.clearTimers();
     }
   }
 
@@ -355,12 +352,12 @@ export class RaftNode implements IRaftNode {
   private sendHeartbeats(): void {
     if (!this.isLeader()) return;
 
-    // Use voter addresses from configuration, not hardcoded peers
-    const voterAddresses = this.getVoterAddresses().filter(
+    // Replicate to both voters and staging nodes
+    const replicationAddresses = this.getReplicationAddresses().filter(
       (addr) => addr !== `http://${config.node.host}:${config.node.port}`
     );
 
-    voterAddresses.forEach(async (peerUrl) => {
+    replicationAddresses.forEach(async (peerUrl) => {
       try {
         await this.replicateLogToPeer(peerUrl);
       } catch (error) {
@@ -468,11 +465,14 @@ export class RaftNode implements IRaftNode {
   }
 
   private initializePeerStates(): void {
+    this.peerStates.clear();
+
     const nextIndex = this.logManager.getLastIndex() + 1;
-    const voterAddresses = this.getVoterAddresses().filter(
+    // Initialize peer states for both voters and staging nodes
+    const replicationAddresses = this.getReplicationAddresses().filter(
       (addr) => addr !== `http://${config.node.host}:${config.node.port}`
     );
-    voterAddresses.forEach((peer) => {
+    replicationAddresses.forEach((peer) => {
       this.peerStates.set(peer, { nextIndex, matchIndex: -1 });
     });
   }
@@ -556,11 +556,15 @@ export class RaftNode implements IRaftNode {
   private updateCommitIndex(): void {
     const lastIndex = this.logManager.getLastIndex();
     const oldCommitIndex = this.logManager.getCommitIndex();
+
+    const voterAddresses = this.getVoterAddresses();
+
     for (let idx = lastIndex; idx > oldCommitIndex; idx--) {
       const replicated =
         1 +
-        Array.from(this.peerStates.values()).filter((p) => p.matchIndex >= idx)
-          .length;
+        Array.from(this.peerStates.entries())
+          .filter(([peerUrl, _]) => voterAddresses.includes(peerUrl))
+          .filter(([_, state]) => state.matchIndex >= idx).length;
       if (replicated >= this.getMajorityCount()) {
         const entry = this.logManager.getEntry(idx);
         if (entry && entry.term === this.currentTerm) {
@@ -603,13 +607,13 @@ export class RaftNode implements IRaftNode {
     );
     this.logManager.appendEntry(entry);
 
-    // Use voter addresses from configuration, not hardcoded peers
-    const voterAddresses = this.getVoterAddresses().filter(
+    // Replicate to both voters and staging nodes
+    const replicationAddresses = this.getReplicationAddresses().filter(
       (addr) => addr !== `http://${config.node.host}:${config.node.port}`
     );
 
     await Promise.all(
-      voterAddresses.map(async (peerUrl) => {
+      replicationAddresses.map(async (peerUrl) => {
         try {
           await this.replicateLogToPeer(peerUrl);
         } catch (error) {
@@ -660,6 +664,14 @@ export class RaftNode implements IRaftNode {
     error?: string;
     configuration?: Configuration;
   }> {
+
+    if (!this.isActive) {
+      return {
+        success: false,
+        error: "Node is unreachable",
+      };
+    }
+
     if (!this.isLeader()) {
       return {
         success: false,
@@ -710,14 +722,24 @@ export class RaftNode implements IRaftNode {
       timestamp: Date.now(),
     };
 
-    this.logger.info(`Adding voter ${id} as staging at index ${entry.index}`);
+    this.logger.info(`Adding voter ${address} as staging at index ${entry.index}`);
     this.logManager.appendEntry(entry);
     this.latestConfiguration = newConfiguration;
     this.pendingConfigurationChange = true;
 
-    // Replicate to peers
+    // Automatically restart the node being added (without resetting state)
+    try {
+      await this.peerClient.sendRestartNode(`${address}/api`, false);
+      this.logger.info(`Successfully restarted node ${id} at ${address}`);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to restart node ${id}: ${(error as Error).message}`
+      );
+    }
+
+    // Replicate to both voters and staging nodes
     await Promise.all(
-      this.getVoterAddresses().map(async (peerUrl) => {
+      this.getReplicationAddresses().map(async (peerUrl) => {
         if (peerUrl !== `http://${config.node.host}:${config.node.port}`) {
           try {
             await this.replicateLogToPeer(peerUrl);
@@ -752,6 +774,14 @@ export class RaftNode implements IRaftNode {
     error?: string;
     configuration?: Configuration;
   }> {
+
+    if (!this.isActive) {
+      return {
+        success: false,
+        error: "Node is unreachable",
+      };
+    }
+
     if (!this.isLeader()) {
       return {
         success: false,
@@ -804,26 +834,41 @@ export class RaftNode implements IRaftNode {
     };
 
     this.logger.info(`Removing peer ${id} at index ${entry.index}`);
+
+    // Automatically stop the removed node
+    const removedServer = this.latestConfiguration.servers.find(
+      (s) => s.id === id
+    );
+    if (removedServer) {
+      try {
+        await this.peerClient.sendStopNode(`${removedServer.address}/api`);
+        this.logger.info(
+          `Successfully stopped removed node ${id} at ${removedServer.address}`
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Failed to stop node ${id}: ${(error as Error).message}`
+        );
+        return {
+          success: false,
+          error: `Failed to stop removed node ${id}`,
+        };
+      }
+    }
+
     this.logManager.appendEntry(entry);
     this.latestConfiguration = newConfiguration;
     this.pendingConfigurationChange = true;
 
-    // Replicate to peers
+    // Replicate to both voters and staging nodes
     await Promise.all(
-      this.getVoterAddresses().map(async (peerUrl) => {
+      this.getReplicationAddresses().map(async (peerUrl) => {
         if (peerUrl !== `http://${config.node.host}:${config.node.port}`) {
           try {
             await this.replicateLogToPeer(peerUrl);
           } catch (error) {
             const errorMsg = (error as Error).message;
-            if (
-              errorMsg.includes("timeout") ||
-              errorMsg.includes("ECONNREFUSED")
-            ) {
-              this.logger.debug(`Replicate to ${peerUrl} failed: ${errorMsg}`);
-            } else {
-              this.logger.warn(`Replicate to ${peerUrl} failed: ${errorMsg}`);
-            }
+            this.logger.warn(`Replicate to ${peerUrl} failed: ${errorMsg}`);
           }
         }
       })
@@ -862,6 +907,15 @@ export class RaftNode implements IRaftNode {
   private getVoterAddresses(): string[] {
     return this.latestConfiguration.servers
       .filter((s) => s.mode === ServerMode.VOTER)
+      .map((s) => s.address);
+  }
+
+  private getReplicationAddresses(): string[] {
+    // Include both voters and staging nodes for log replication
+    return this.latestConfiguration.servers
+      .filter(
+        (s) => s.mode === ServerMode.VOTER || s.mode === ServerMode.STAGING
+      )
       .map((s) => s.address);
   }
 
@@ -919,9 +973,9 @@ export class RaftNode implements IRaftNode {
     this.latestConfiguration = newConfiguration;
     this.pendingConfigurationChange = true;
 
-    // Replicate to peers
+    // Replicate to both voters and staging nodes
     await Promise.all(
-      this.getVoterAddresses().map(async (peerUrl) => {
+      this.getReplicationAddresses().map(async (peerUrl) => {
         if (peerUrl !== `http://${config.node.host}:${config.node.port}`) {
           try {
             await this.replicateLogToPeer(peerUrl);

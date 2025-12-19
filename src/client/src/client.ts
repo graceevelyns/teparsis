@@ -5,6 +5,7 @@ export interface RaftClientOptions {
 export interface StatusResponse {
   nodeUrl: string;
   state: string;
+  isActive?: boolean;
   term?: number;
   isLeader?: boolean;
   leaderId?: string;

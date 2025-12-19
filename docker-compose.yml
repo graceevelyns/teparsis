@@ -1,16 +1,17 @@
 services:
   # Raft Node 1 (Leader candidate)
-  raft-node1:
+  raft-node3000:
     build:
       context: ./src/server
       target: development
-    container_name: raft-node1
+    container_name: raft-node3000
     ports:
       - "3000:3000"
     environment:
       - NODE_ID=3000
       - NODE_PORT=3000
-      - CLUSTER_PEERS=http://raft-node2:3000,http://raft-node3:3000,http://raft-node4:3000,http://raft-node5:3000,http://raft-node6:3000
+      - NODE_HOST=raft-node3000
+      - CLUSTER_PEERS=http://raft-node3001:3000,http://raft-node3002:3000,http://raft-node3003:3000,http://raft-node3004:3000,http://raft-node3005:3000
       - CLUSTER_PEERS_IDS=3001,3002,3003,3004,3005
       - INITIAL_ACTIVE=true
     volumes:
@@ -18,23 +19,24 @@ services:
       - ./src/server/src:/app/src
       - ./src/server/tsconfig.json:/app/tsconfig.json
       # Use named volume for node_modules to avoid conflicts
-      - raft-node1-modules:/app/node_modules
+      - raft-node3000-modules:/app/node_modules
     networks:
       - raft-network
     restart: unless-stopped
 
   # Raft Node 2
-  raft-node2:
+  raft-node3001:
     build:
       context: ./src/server
       target: development
-    container_name: raft-node2
+    container_name: raft-node3001
     ports:
       - "3001:3000"
     environment:
       - NODE_ID=3001
       - NODE_PORT=3000
-      - CLUSTER_PEERS=http://raft-node1:3000,http://raft-node3:3000,http://raft-node4:3000,http://raft-node5:3000,http://raft-node6:3000
+      - NODE_HOST=raft-node3001
+      - CLUSTER_PEERS=http://raft-node3000:3000,http://raft-node3002:3000,http://raft-node3003:3000,http://raft-node3004:3000,http://raft-node3005:3000
       - CLUSTER_PEERS_IDS=3000,3002,3003,3004,3005
       - INITIAL_ACTIVE=true
     volumes:
@@ -42,23 +44,24 @@ services:
       - ./src/server/src:/app/src
       - ./src/server/tsconfig.json:/app/tsconfig.json
       # Use named volume for node_modules to avoid conflicts
-      - raft-node2-modules:/app/node_modules
+      - raft-node3001-modules:/app/node_modules
     networks:
       - raft-network
     restart: unless-stopped
 
   # Raft Node 3
-  raft-node3:
+  raft-node3002:
     build:
       context: ./src/server
       target: development
-    container_name: raft-node3
+    container_name: raft-node3002
     ports:
       - "3002:3000"
     environment:
       - NODE_ID=3002
       - NODE_PORT=3000
-      - CLUSTER_PEERS=http://raft-node1:3000,http://raft-node2:3000,http://raft-node4:3000,http://raft-node5:3000,http://raft-node6:3000
+      - NODE_HOST=raft-node3002
+      - CLUSTER_PEERS=http://raft-node3000:3000,http://raft-node3001:3000,http://raft-node3003:3000,http://raft-node3004:3000,http://raft-node3005:3000
       - CLUSTER_PEERS_IDS=3000,3001,3003,3004,3005
       - INITIAL_ACTIVE=true
     volumes:
@@ -66,23 +69,24 @@ services:
       - ./src/server/src:/app/src
       - ./src/server/tsconfig.json:/app/tsconfig.json
       # Use named volume for node_modules to avoid conflicts
-      - raft-node3-modules:/app/node_modules
+      - raft-node3002-modules:/app/node_modules
     networks:
       - raft-network
     restart: unless-stopped
 
   # Raft Node 4
-  raft-node4:
+  raft-node3003:
     build:
       context: ./src/server
       target: development
-    container_name: raft-node4
+    container_name: raft-node3003
     ports:
       - "3003:3000"
     environment:
       - NODE_ID=3003
       - NODE_PORT=3000
-      - CLUSTER_PEERS=http://raft-node1:3000,http://raft-node2:3000,http://raft-node3:3000,http://raft-node5:3000,http://raft-node6:3000
+      - NODE_HOST=raft-node3003
+      - CLUSTER_PEERS=http://raft-node3000:3000,http://raft-node3001:3000,http://raft-node3002:3000,http://raft-node3004:3000,http://raft-node3005:3000
       - CLUSTER_PEERS_IDS=3000,3001,3002,3004,3005
       - INITIAL_ACTIVE=true
     volumes:
@@ -90,23 +94,24 @@ services:
       - ./src/server/src:/app/src
       - ./src/server/tsconfig.json:/app/tsconfig.json
       # Use named volume for node_modules to avoid conflicts
-      - raft-node4-modules:/app/node_modules
+      - raft-node3003-modules:/app/node_modules
     networks:
       - raft-network
     restart: unless-stopped
 
   # Raft Node 5
-  raft-node5:
+  raft-node3004:
     build:
       context: ./src/server
       target: development
-    container_name: raft-node5
+    container_name: raft-node3004
     ports:
       - "3004:3000"
     environment:
       - NODE_ID=3004
       - NODE_PORT=3000
-      - CLUSTER_PEERS=http://raft-node1:3000,http://raft-node2:3000,http://raft-node3:3000,http://raft-node4:3000,http://raft-node6:3000
+      - NODE_HOST=raft-node3004
+      - CLUSTER_PEERS=http://raft-node3000:3000,http://raft-node3001:3000,http://raft-node3002:3000,http://raft-node3003:3000,http://raft-node3005:3000
       - CLUSTER_PEERS_IDS=3000,3001,3002,3003,3005
       - INITIAL_ACTIVE=true
     volumes:
@@ -114,23 +119,24 @@ services:
       - ./src/server/src:/app/src
       - ./src/server/tsconfig.json:/app/tsconfig.json
       # Use named volume for node_modules to avoid conflicts
-      - raft-node5-modules:/app/node_modules
+      - raft-node3004-modules:/app/node_modules
     networks:
       - raft-network
     restart: unless-stopped
 
   # Raft Node 6
-  raft-node6:
+  raft-node3005:
     build:
       context: ./src/server
       target: development
-    container_name: raft-node6
+    container_name: raft-node3005
     ports:
       - "3005:3000"
     environment:
       - NODE_ID=3005
       - NODE_PORT=3000
-      - CLUSTER_PEERS=http://raft-node1:3000,http://raft-node2:3000,http://raft-node3:3000,http://raft-node4:3000,http://raft-node5:3000
+      - NODE_HOST=raft-node3005
+      - CLUSTER_PEERS=http://raft-node3000:3000,http://raft-node3001:3000,http://raft-node3002:3000,http://raft-node3003:3000,http://raft-node3004:3000
       - CLUSTER_PEERS_IDS=3000,3001,3002,3003,3004
       - INITIAL_ACTIVE=false
     volumes:
@@ -138,7 +144,7 @@ services:
       - ./src/server/src:/app/src
       - ./src/server/tsconfig.json:/app/tsconfig.json
       # Use named volume for node_modules to avoid conflicts
-      - raft-node6-modules:/app/node_modules
+      - raft-node3005-modules:/app/node_modules
     networks:
       - raft-network
     restart: unless-stopped
@@ -170,12 +176,12 @@ services:
     networks:
       - raft-network
     depends_on:
-      - raft-node1
-      - raft-node2
-      - raft-node3
-      - raft-node4
-      - raft-node5
-      - raft-node6
+      - raft-node3000
+      - raft-node3001
+      - raft-node3002
+      - raft-node3003
+      - raft-node3004
+      - raft-node3005
     restart: unless-stopped
 
 networks:
@@ -183,10 +189,10 @@ networks:
     driver: bridge
 
 volumes:
-  raft-node1-modules:
-  raft-node2-modules:
-  raft-node3-modules:
-  raft-node4-modules:
-  raft-node5-modules:
-  raft-node6-modules:
+  raft-node3000-modules:
+  raft-node3001-modules:
+  raft-node3002-modules:
+  raft-node3003-modules:
+  raft-node3004-modules:
+  raft-node3005-modules:
   web-client-modules:

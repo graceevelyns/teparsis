@@ -16,94 +16,6 @@
 
       <div class="main-grid">
         <!-- Configuration -->
-        <div class="card">
-          <h2>Node Control</h2>
-          <p class="section-description">
-            Simulate node crashes and restarts. Select a node from the cluster
-            status first.
-          </p>
-          <div class="button-group">
-            <button class="btn-danger" onclick="stopNode()">
-              Stop Selected Node
-            </button>
-            <button class="btn-success" onclick="restartNode(false)">
-              Restart (Keep State)
-            </button>
-            <button class="btn-warning" onclick="restartNode(true)">
-              Restart (Reset State)
-            </button>
-          </div>
-          <div id="nodeControlResult" class="result"></div>
-        </div>
-
-        <!-- Operations -->
-        <div class="card">
-          <h2>Operations</h2>
-          <div class="form-group">
-            <label for="key">Key:</label>
-            <input type="text" id="key" placeholder="Enter key name" />
-          </div>
-          <div class="form-group">
-            <label for="value">Value:</label>
-            <input type="text" id="value" placeholder="Enter value" />
-          </div>
-          <div class="button-group">
-            <button class="btn-success" onclick="setValue()">Set</button>
-            <button class="btn-primary" onclick="getValue()">Get</button>
-            <button class="btn-warning" onclick="appendValue()">Append</button>
-            <button class="btn-info" onclick="getLength()">Length</button>
-            <button class="btn-danger" onclick="deleteValue()">Delete</button>
-          </div>
-          <div id="operationResult" class="result"></div>
-        </div>
-
-        <!-- Cluster Status -->
-        <div class="card cluster-status">
-          <h2>Cluster Status</h2>
-          <button class="btn-primary" onclick="getClusterStatus()">
-            Refresh Status
-          </button>
-          <div class="loading" id="statusLoading">
-            <div class="spinner"></div>
-            <p>Loading cluster status...</p>
-          </div>
-          <div id="clusterStatus" class="status-grid"></div>
-        </div>
-
-        <!-- Request Log -->
-        <div class="card cluster-status">
-          <h2>Leader Logs</h2>
-          <button class="btn-primary" onclick="getRequestLog()">
-            Get Logs
-          </button>
-          <div class="loading" id="logLoading">
-            <div class="spinner"></div>
-            <p>Loading logs...</p>
-          </div>
-          <div id="requestLogResult" class="log-container"></div>
-        </div>
-
-        <!-- Node Control (Crash Simulation) -->
-        <!-- <div class="card">
-          <h2>Node Control</h2>
-          <p class="section-description">
-            Simulate node crashes and restarts. Select a node from the cluster
-            status first.
-          </p>
-          <div class="button-group">
-            <button class="btn-danger" onclick="stopNode()">
-              Stop Selected Node
-            </button>
-            <button class="btn-success" onclick="restartNode(false)">
-              Restart (Keep State)
-            </button>
-            <button class="btn-warning" onclick="restartNode(true)">
-              Restart (Reset State)
-            </button>
-          </div>
-          <div id="nodeControlResult" class="result"></div>
-        </div> -->
-
         <!-- Cluster Membership Management -->
         <div class="card">
           <h2>Cluster Membership Management</h2>
@@ -140,6 +52,54 @@
             </button>
           </div>
           <div id="membershipResult" class="result"></div>
+        </div>
+
+        <!-- Operations -->
+        <div class="card">
+          <h2>Operations</h2>
+          <div class="form-group">
+            <label for="key">Key:</label>
+            <input type="text" id="key" placeholder="Enter key name" />
+          </div>
+          <div class="form-group">
+            <label for="value">Value:</label>
+            <input type="text" id="value" placeholder="Enter value" />
+          </div>
+          <div class="button-group">
+            <button class="btn-success" onclick="setValue()">Set</button>
+            <button class="btn-primary" onclick="getValue()">Get</button>
+            <button class="btn-warning" onclick="appendValue()">Append</button>
+            <button class="btn-info" onclick="getLength()">Length</button>
+            <button class="btn-danger" onclick="deleteValue()">Delete</button>
+            <button class="btn-primary" onclick="pingLeader()">Ping</button>
+          </div>
+          <div id="operationResult" class="result"></div>
+        </div>
+
+        <!-- Cluster Status -->
+        <div class="card cluster-status">
+          <h2>Cluster Status</h2>
+          <button class="btn-primary" onclick="getClusterStatus()">
+            Refresh Status
+          </button>
+          <div class="loading" id="statusLoading">
+            <div class="spinner"></div>
+            <p>Loading cluster status...</p>
+          </div>
+          <div id="clusterStatus" class="status-grid"></div>
+        </div>
+
+        <!-- Request Log -->
+        <div class="card cluster-status">
+          <h2>Leader Logs</h2>
+          <button class="btn-primary" onclick="getRequestLog()">
+            Get Logs
+          </button>
+          <div class="loading" id="logLoading">
+            <div class="spinner"></div>
+            <p>Loading logs...</p>
+          </div>
+          <div id="requestLogResult" class="log-container"></div>
         </div>
       </div>
     </div>

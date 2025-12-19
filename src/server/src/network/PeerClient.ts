@@ -64,6 +64,39 @@ export class PeerClient implements IPeerClient {
     }
   }
 
+  async sendStopNode(
+    nodeUrl: string
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      return await this.makeHttpRequest<{ success: boolean; error?: string }>(
+        `${nodeUrl}/stop-node`,
+        {}
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Failed to send StopNode to ${nodeUrl}: ${(error as Error).message}`
+      );
+      throw error;
+    }
+  }
+
+  async sendRestartNode(
+    nodeUrl: string,
+    resetState: boolean
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      return await this.makeHttpRequest<{ success: boolean; error?: string }>(
+        `${nodeUrl}/restart-node`,
+        { resetState }
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Failed to send RestartNode to ${nodeUrl}: ${(error as Error).message}`
+      );
+      throw error;
+    }
+  }
+
   private async makeHttpRequest<T>(url: string, data: any): Promise<T> {
     return new Promise((resolve, reject) => {
       const urlObj = new URL(url);
