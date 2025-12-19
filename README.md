@@ -16,15 +16,15 @@ Implementasi Distributed Key-Value Store berbasis algoritma Raft Consensus ini d
 
 ## Status Fitur
 
-| Fitur                  | Status  |
-| ---------------------- | ------- |
-| Heartbeat              | Selesai |
-| Leader Election        | Selesai |
-| Log Replication        | Selesai |
-| Membership Change      | Selesai |
-| Unit Testing (bonus)   | Selesai |
-| Transaction (bonus)    | Selesai |
-| Log Compaction (bonus) | Selesai |
+| Fitur                  | Status        |
+| ---------------------- | ------------- |
+| Heartbeat              | Selesai       |
+| Leader Election        | Selesai       |
+| Log Replication        | Selesai       |
+| Membership Change      | Selesai       |
+| Unit Testing (bonus)   | Selesai       |
+| Transaction (bonus)    | Selesai       |
+| Log Compaction (bonus) | Belum selesai |
 
 ## Cara Menjalankan
 
@@ -36,19 +36,13 @@ cd tugas-besar-if3130-sistem-paralel-dan-terdistribusi-teparsis
 docker-compose up --build
 ```
 
-Services akan berjalan di:
-
-- **Web Client**: http://localhost:8080
-- **Raft Node 1**: http://localhost:3000
-- **Raft Node 2**: http://localhost:3001
-- **Raft Node 3**: http://localhost:3002
-
 ## Struktur Project
 
 ```
 .
 ├── README.md
 ├── docker-compose.yml
+├── image.png
 └── src
     ├── client
     │   ├── Dockerfile
@@ -57,6 +51,7 @@ Services akan berjalan di:
     │   │   ├── app.js
     │   │   ├── client.js
     │   │   └── styles.css
+    │   ├── generate-config.sh
     │   ├── index.html
     │   ├── package.json
     │   ├── src
@@ -67,6 +62,7 @@ Services akan berjalan di:
     └── server
         ├── Dockerfile
         ├── README.md
+        ├── jest.config.ts
         ├── node_modules
         ├── package-lock.json
         ├── package.json
@@ -79,6 +75,9 @@ Services akan berjalan di:
         │   ├── store
         │   ├── types
         │   └── utils
+        ├── tests
+        │   ├── core
+        │   └── store
         └── tsconfig.json
 ```
 
