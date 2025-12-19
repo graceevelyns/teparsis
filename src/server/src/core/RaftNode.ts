@@ -5,6 +5,8 @@ import {
   RequestVoteRequest,
   RequestVoteResponse,
   LogEntry,
+  LogCommand,
+  KVWriteCommand,
   Configuration,
   ServerInfo,
   ServerMode,
@@ -257,7 +259,14 @@ export class RaftNode implements IRaftNode {
     key: string,
     value?: string
   ): Promise<boolean> {
-    return this.handlePropose(operation, key, value);
+    const command: LogCommand =
+      value === undefined ? { operation, key } : { operation, key, value };
+    return this.handlePropose(command);
+  }
+
+  // Client propose batch entry to be appended to the log
+  proposeTransaction(commands: KVWriteCommand[]): Promise<boolean> {
+    return this.handlePropose({ operation: "transaction", commands });
   }
 
   private becomeFollower(term: number): void {
@@ -431,11 +440,19 @@ export class RaftNode implements IRaftNode {
     // Handle data commands
     if (!entry.command) return;
 
-    const { operation, key, value } = entry.command;
-    this.logger.info(
-      `Applying log entry: ${operation} ${key}${value ? " = " + value : ""}`
-    );
+    const { command } = entry;
+    this.logger.info(`Applying log entry: ${this.describeCommand(command)}`);
 
+    if (command.operation === "transaction") {
+      command.commands.forEach((cmd) => this.applyWriteCommand(cmd));
+      return;
+    }
+
+    this.applyWriteCommand(command);
+  }
+
+  private applyWriteCommand(command: KVWriteCommand): void {
+    const { operation, key, value } = command;
     switch (operation) {
       case "set":
         if (value !== undefined) {
@@ -583,18 +600,17 @@ export class RaftNode implements IRaftNode {
   }
 
   // Client propose entry to be appended to the log
-  private async handlePropose(
-    operation: "set" | "del" | "append",
-    key: string,
-    value?: string
-  ): Promise<boolean> {
+  private async handlePropose(command: LogCommand): Promise<boolean> {
     if (!this.isLeader()) {
       this.logger.warn(`Propose rejected: not a leader`);
       return false;
     }
 
-    const command =
-      value === undefined ? { operation, key } : { operation, key, value };
+    if (command.operation === "transaction" && command.commands.length === 0) {
+      this.logger.warn("Propose rejected: empty transaction");
+      return false;
+    }
+
     const entry: LogEntry = {
       index: this.logManager.getLastIndex() + 1,
       term: this.currentTerm,
@@ -602,9 +618,7 @@ export class RaftNode implements IRaftNode {
       timestamp: Date.now(),
     };
 
-    this.logger.info(
-      `Proposed entry: ${operation} ${key}${value ? " = " + value : ""}`
-    );
+    this.logger.info(`Proposed entry: ${this.describeCommand(command)}`);
     this.logManager.appendEntry(entry);
 
     // Replicate to both voters and staging nodes
@@ -632,6 +646,15 @@ export class RaftNode implements IRaftNode {
 
     this.updateCommitIndex();
     return this.logManager.getCommitIndex() >= entry.index;
+  }
+
+  private describeCommand(command: LogCommand): string {
+    if (command.operation === "transaction") {
+      return `transaction (${command.commands.length} ops)`;
+    }
+    return `${command.operation} ${command.key}${
+      command.value ? " = " + command.value : ""
+    }`;
   }
 
   getLogs(): any[] {

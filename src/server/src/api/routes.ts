@@ -20,6 +20,7 @@ export function createRoutes(handlers: RouteHandlers): Router {
 
   // Unified client interfaces
   router.post("/execute", handlers.clientController.execute);
+  router.post("/transaction", handlers.clientController.executeTransaction);
   router.get("/request_log", handlers.clientController.requestLog);
 
   // Membership change routes

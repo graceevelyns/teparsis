@@ -1,4 +1,4 @@
-import { RaftNodeState, Configuration } from "../../types";
+import { RaftNodeState, KVWriteCommand, Configuration } from "../../types";
 
 /**
  * Interface for the main Raft consensus node
@@ -38,6 +38,9 @@ export interface IRaftNode {
     key: string,
     value?: string
   ): Promise<boolean>;
+
+  // Propose batch of operations as a single transaction entry
+  proposeTransaction(commands: KVWriteCommand[]): Promise<boolean>;
 
   // Get all logs from the node
   getLogs(): any[];

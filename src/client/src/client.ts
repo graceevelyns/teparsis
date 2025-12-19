@@ -21,6 +21,12 @@ export interface ApiResponse {
   error?: string;
 }
 
+export interface TransactionCommand {
+    operation: "set" | "del" | "append";
+    key: string;
+    value?: string;
+}
+
 export class RaftClient {
   private currentLeaderIndex: number = 0;
   private selectedNodeUrl: string | null = null;
@@ -201,6 +207,10 @@ export class RaftClient {
       "GET",
       `/api/kv/${encodeURIComponent(key)}/length`
     );
+  }
+
+  async transaction(commands: TransactionCommand[]): Promise<ApiResponse> {
+    return await this.executeRequest("POST", `/api/transaction`, { commands });
   }
 
   async status(): Promise<StatusResponse[]> {
