@@ -236,6 +236,67 @@ async function getRequestLog(): Promise<void> {
 
 (window as any).getRequestLog = getRequestLog;
 
+async function getSnapshotInfo(): Promise<void> {
+    const loading = document.getElementById('snapshotLoading');
+    const snapshotDiv = document.getElementById('snapshotInfo');
+    if (!loading || !snapshotDiv) return;
+
+    loading.classList.add('active');
+    snapshotDiv.innerHTML = '';
+
+    try {
+        const result = await client.getSnapshotInfo();
+        const info = result.value;
+
+        if (!info.hasSnapshot) {
+            snapshotDiv.innerHTML = '<div class="result info">No snapshot yet</div>';
+            return;
+        }
+
+        const timestampDate = new Date(info.snapshot.timestamp);
+        const snapshotHtml = `
+            <div class="snapshot-card">
+                <h3>Current Snapshot</h3>
+                <div class="snapshot-details">
+                    <div><strong>Last Included Index:</strong> ${info.snapshot.lastIncludedIndex}</div>
+                    <div><strong>Last Included Term:</strong> ${info.snapshot.lastIncludedTerm}</div>
+                    <div><strong>Data Keys:</strong> ${info.snapshot.dataKeys}</div>
+                    <div><strong>Created:</strong> ${timestampDate.toLocaleString()}</div>
+                </div>
+                <h4>Log Status</h4>
+                <div class="snapshot-details">
+                    <div><strong>First Index:</strong> ${info.log.firstIndex}</div>
+                    <div><strong>Last Index:</strong> ${info.log.lastIndex}</div>
+                    <div><strong>Commit Index:</strong> ${info.log.commitIndex}</div>
+                    <div><strong>Entries After Snapshot:</strong> ${Math.max(0, info.log.lastIndex - info.snapshot.lastIncludedIndex)}</div>
+                </div>
+            </div>
+        `;
+        snapshotDiv.innerHTML = snapshotHtml;
+
+    } catch (error) {
+        snapshotDiv.innerHTML = `<div class="result error">Failed to get snapshot info: ${(error as Error).message}</div>`;
+    } finally {
+        loading.classList.remove('active');
+    }
+}
+
+async function triggerSnapshotManual(): Promise<void> {
+    try {
+        const result = await client.triggerSnapshot();
+        if (result.value) {
+            showResult('snapshotTriggerResult', 'success', result.value);
+            // Refresh snapshot info
+            setTimeout(() => getSnapshotInfo(), 500);
+        }
+    } catch (error) {
+        showResult('snapshotTriggerResult', 'error', 'Failed to trigger snapshot: ' + (error as Error).message);
+    }
+}
+
+(window as any).getSnapshotInfo = getSnapshotInfo;
+(window as any).triggerSnapshotManual = triggerSnapshotManual;
+
 // Load cluster status on page load
 window.addEventListener('load', () => {
     getClusterStatus();

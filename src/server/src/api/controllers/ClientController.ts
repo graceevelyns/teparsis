@@ -281,6 +281,41 @@ export class ClientController {
     }
   };
 
+  /**
+   * Get snapshot information and statistics
+   */
+  getSnapshotInfo = (req: Request, res: Response): void => {
+    try {
+      // Import LogManager type to access snapshot
+      const logManager = (this.raftNode as any).logManager;
+      const snapshot = logManager?.getLatestSnapshot();
+      
+      const info = {
+        hasSnapshot: !!snapshot,
+        snapshot: snapshot ? {
+          lastIncludedIndex: snapshot.lastIncludedIndex,
+          lastIncludedTerm: snapshot.lastIncludedTerm,
+          timestamp: snapshot.timestamp,
+          dataKeys: Object.keys(snapshot.data).length,
+        } : null,
+        log: {
+          firstIndex: logManager?.getFirstIndex() || 0,
+          lastIndex: logManager?.getLastIndex() || -1,
+          commitIndex: logManager?.getCommitIndex() || -1,
+        }
+      };
+
+      const response: ClientResponse = {
+        success: true,
+        value: info,
+      };
+      res.json(response);
+    } catch (error) {
+      this.logger.error("Error in GET_SNAPSHOT_INFO operation", error as Error);
+      this.sendError(res, "Internal server error");
+    }
+  };
+
   private redirectToLeader(res: Response): void {
     const response: ClientResponse = {
       success: false,

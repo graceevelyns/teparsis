@@ -24,6 +24,7 @@ export function createRoutes(handlers: RouteHandlers): Router {
 
   // Snapshot management
   router.post("/snapshot", handlers.clientController.triggerSnapshot);
+  router.get("/snapshot-info", handlers.clientController.getSnapshotInfo);
 
   // Raft protocol routes
   router.post("/raft/append-entries", handlers.raftController.appendEntries);

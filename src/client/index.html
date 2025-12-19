@@ -69,6 +69,21 @@ http://localhost:3002</textarea>
                 </div>
                 <div id="requestLogResult" class="log-container"></div>
             </div>
+
+            <!-- Snapshot Info -->
+            <div class="card cluster-status">
+                <h2>Snapshot Info</h2>
+                <div class="button-group">
+                    <button class="btn-primary" onclick="getSnapshotInfo()">Get Snapshot Info</button>
+                    <button class="btn-success" onclick="triggerSnapshotManual()">Trigger Snapshot</button>
+                </div>
+                <div id="snapshotTriggerResult" class="result"></div>
+                <div class="loading" id="snapshotLoading">
+                    <div class="spinner"></div>
+                    <p>Loading snapshot info...</p>
+                </div>
+                <div id="snapshotInfo"></div>
+            </div>
         </div>
     </div>
 

@@ -147,4 +147,12 @@ export class RaftClient {
     async requestLog(): Promise<ApiResponse> {
         return await this.executeRequest('GET', '/api/request_log');
     }
+
+    async getSnapshotInfo(): Promise<ApiResponse> {
+        return await this.executeRequest('GET', '/api/snapshot-info');
+    }
+
+    async triggerSnapshot(): Promise<ApiResponse> {
+        return await this.executeRequest('POST', '/api/snapshot');
+    }
 }
