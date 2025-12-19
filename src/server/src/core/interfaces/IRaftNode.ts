@@ -1,4 +1,5 @@
 import { RaftNodeState } from "../../types";
+import { InstallSnapshotRequest, InstallSnapshotResponse } from "../../types/Snapshot";
 
 /**
  * Interface for the main Raft consensus node
@@ -32,9 +33,16 @@ export interface IRaftNode {
   // Process incoming RequestVote RPC from candidate
   processRequestVote(request: any): any;
   
+  // Process incoming InstallSnapshot RPC from leader
+  processInstallSnapshot(request: InstallSnapshotRequest): InstallSnapshotResponse;
+  
   // Propose new entry for consensus (only leader can call this)
   proposeEntry(operation: 'set' | 'del' | 'append', key: string, value?: string): Promise<boolean>;
 
   // Get all logs from the node
   getLogs(): any[];
+
+  // Trigger snapshot creation (if log is large enough)
+  triggerSnapshot(): boolean;
 }
+

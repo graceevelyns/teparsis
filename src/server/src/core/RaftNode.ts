@@ -6,15 +6,22 @@ import {
   RequestVoteResponse,
   LogEntry,
 } from "../types";
+import { 
+  Snapshot, 
+  InstallSnapshotRequest, 
+  InstallSnapshotResponse,
+  RaftPersistentState 
+} from "../types/Snapshot";
 import { IRaftNode } from "./interfaces/IRaftNode";
 import { IKVStore } from "../store/IKVStore";
 import { ILogManager } from "./interfaces/ILogManager";
 import { IPeerClient } from "../network/IPeerClient";
+import { PersistentStorage } from "./PersistentStorage";
 import { Logger } from "../utils/Logger";
 import config from "../config";
 
 /**
- * Core Raft consensus node implementation
+ * Core Raft consensus node implementation with snapshot support
  */
 export class RaftNode implements IRaftNode {
   private state: RaftNodeState = RaftNodeState.FOLLOWER;
@@ -33,8 +40,68 @@ export class RaftNode implements IRaftNode {
     private readonly store: IKVStore,
     private readonly logManager: ILogManager,
     private readonly peerClient: IPeerClient,
-    private readonly logger: Logger
-  ) {}
+    private readonly logger: Logger,
+    private readonly storage?: PersistentStorage
+  ) {
+    this.loadPersistedState();
+  }
+
+  /**
+   * Load persisted state from storage
+   */
+  private loadPersistedState(): void {
+    // Load Raft state (currentTerm, votedFor)
+    if (this.storage) {
+      const state = this.storage.loadRaftState();
+      if (state) {
+        this.currentTerm = state.currentTerm;
+        this.votedFor = state.votedFor;
+        this.logger.info(
+          `Loaded persisted state: term=${this.currentTerm}, votedFor=${this.votedFor}`
+        );
+      }
+    }
+
+    // Apply snapshot to state machine if exists
+    const snapshot = this.logManager.getLatestSnapshot();
+    if (snapshot) {
+      this.store.restoreState(snapshot.data);
+      this.lastApplied = snapshot.lastIncludedIndex;
+      this.logger.info(
+        `Restored state from snapshot at index ${snapshot.lastIncludedIndex}`
+      );
+    }
+
+    // Replay log entries after snapshot
+    this.replayLogEntries();
+  }
+
+  /**
+   * Replay committed log entries to state machine
+   */
+  private replayLogEntries(): void {
+    const commitIndex = this.logManager.getCommitIndex();
+    while (this.lastApplied < commitIndex) {
+      this.lastApplied++;
+      const entry = this.logManager.getEntry(this.lastApplied);
+      if (entry) {
+        this.applyLogEntry(entry);
+      }
+    }
+  }
+
+  /**
+   * Persist Raft state to storage
+   */
+  private persistState(): void {
+    if (this.storage) {
+      const state: RaftPersistentState = {
+        currentTerm: this.currentTerm,
+        votedFor: this.votedFor,
+      };
+      this.storage.saveRaftState(state);
+    }
+  }
 
   getState(): RaftNodeState {
     return this.state;
@@ -58,7 +125,7 @@ export class RaftNode implements IRaftNode {
 
   start(): void {
     this.logger.info(`Starting Raft node ${config.node.id}`);
-    this.becomeFollower(0);
+    this.becomeFollower(this.currentTerm);
   }
 
   stop(): void {
@@ -91,6 +158,13 @@ export class RaftNode implements IRaftNode {
     }
     
     this.resetElectionTimer();
+
+    // Check if prevLogIndex is within snapshot
+    const firstIndex = this.logManager.getFirstIndex();
+    if (request.prevLogIndex < firstIndex - 1) {
+      // Leader is behind our snapshot, reject and let leader catch up
+      return { term: this.currentTerm, success: false };
+    }
 
     // Reply false if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
     const prevEntry = this.logManager.getEntry(request.prevLogIndex);
@@ -146,12 +220,13 @@ export class RaftNode implements IRaftNode {
       request.lastLogTerm
     );
 
-    // If votedFor is null or candidateId, and candidate’s log is at least as up-to-date as receiver’s log, grant vote
+    // If votedFor is null or candidateId, and candidate's log is at least as up-to-date as receiver's log, grant vote
     const notVotedOrSame =
       this.votedFor === null || this.votedFor === request.candidateId;
 
     if (notVotedOrSame && candidateUpToDate) {
       this.votedFor = request.candidateId;
+      this.persistState();
       this.logger.info(
         `Voted for candidate ${request.candidateId} in term ${request.term}`
       );
@@ -160,6 +235,48 @@ export class RaftNode implements IRaftNode {
     }
 
     return { term: this.currentTerm, voteGranted: false };
+  }
+
+  /**
+   * Process InstallSnapshot RPC from leader
+   */
+  processInstallSnapshot(request: InstallSnapshotRequest): InstallSnapshotResponse {
+    // Reply immediately if term < currentTerm
+    if (request.term < this.currentTerm) {
+      this.logger.warn(
+        `InstallSnapshot rejected: term ${request.term} < currentTerm ${this.currentTerm}`
+      );
+      return { term: this.currentTerm };
+    }
+
+    // Step down if newer term
+    if (request.term > this.currentTerm) {
+      this.becomeFollower(request.term);
+    }
+
+    this.leaderId = request.leaderId;
+    this.resetElectionTimer();
+
+    // Create snapshot from request
+    const snapshot: Snapshot = {
+      lastIncludedIndex: request.lastIncludedIndex,
+      lastIncludedTerm: request.lastIncludedTerm,
+      data: request.data,
+      timestamp: Date.now(),
+    };
+
+    // Install snapshot
+    this.logManager.installSnapshot(snapshot);
+
+    // Restore state machine from snapshot
+    this.store.restoreState(snapshot.data);
+    this.lastApplied = snapshot.lastIncludedIndex;
+
+    this.logger.info(
+      `Installed snapshot from leader at index ${request.lastIncludedIndex}`
+    );
+
+    return { term: this.currentTerm };
   }
 
   // Client propose entry to be appended to the log
@@ -171,11 +288,43 @@ export class RaftNode implements IRaftNode {
     return this.handlePropose(operation, key, value);
   }
 
+  /**
+   * Trigger snapshot creation if log is large enough
+   */
+  triggerSnapshot(): boolean {
+    const threshold = config.storage?.snapshotThreshold || 100;
+    
+    // Check if we have enough committed entries to snapshot
+    const commitIndex = this.logManager.getCommitIndex();
+    const firstIndex = this.logManager.getFirstIndex();
+    const entriesCount = commitIndex - firstIndex + 1;
+
+    if (entriesCount < threshold / 2) {
+      this.logger.info(
+        `Snapshot not needed: only ${entriesCount} entries (threshold: ${threshold})`
+      );
+      return false;
+    }
+
+    // Create snapshot at current commitIndex
+    const state = this.store.getState();
+    const snapshot = this.logManager.createSnapshot(commitIndex, state);
+
+    // Compact log
+    this.logManager.compactLog(commitIndex);
+
+    this.logger.info(
+      `Created snapshot at index ${snapshot.lastIncludedIndex}, compacted log`
+    );
+    return true;
+  }
+
   private becomeFollower(term: number): void {
     this.state = RaftNodeState.FOLLOWER;
     this.currentTerm = term;
     this.votedFor = null;
     this.leaderId = null;
+    this.persistState();
     this.clearTimers();
     this.resetElectionTimer();
     this.logger.info(`Became follower for term ${term}`);
@@ -186,6 +335,7 @@ export class RaftNode implements IRaftNode {
     this.currentTerm++;
     this.votedFor = config.node.id;
     this.leaderId = null;
+    this.persistState();
     this.clearTimers();
     this.logger.info(`Became candidate for term ${this.currentTerm}`);
     this.startElection();
@@ -308,6 +458,14 @@ export class RaftNode implements IRaftNode {
         this.applyLogEntry(entry);
       }
     }
+
+    // Check if we should trigger snapshot (auto-compaction)
+    if (config.storage?.snapshotThreshold) {
+      const firstIndex = this.logManager.getFirstIndex();
+      if (commitIndex - firstIndex + 1 >= config.storage.snapshotThreshold) {
+        this.triggerSnapshot();
+      }
+    }
   }
 
   private applyLogEntry(entry: LogEntry): void {
@@ -354,6 +512,13 @@ export class RaftNode implements IRaftNode {
   private async replicateLogToPeer(peerUrl: string): Promise<boolean> {
     const state = this.peerStates.get(peerUrl);
     if (!state) return false;
+
+    // Check if peer needs snapshot
+    const firstIndex = this.logManager.getFirstIndex();
+    if (state.nextIndex < firstIndex) {
+      // Peer is behind snapshot, send InstallSnapshot
+      return await this.sendSnapshotToPeer(peerUrl);
+    }
 
     // Simple backoff loop using decrease nextIndex on failure
     while (true) {
@@ -402,12 +567,66 @@ export class RaftNode implements IRaftNode {
 
         // If follower log inconsistent, decrement nextIndex and retry
         state.nextIndex = Math.max(0, state.nextIndex - 1);
+
+        // Check if we need to send snapshot instead
+        if (state.nextIndex < firstIndex) {
+          return await this.sendSnapshotToPeer(peerUrl);
+        }
       } catch (error) {
         this.logger.warn(
           `Replicate to ${peerUrl} failed: ${(error as Error).message}`
         );
         return false;
       }
+    }
+  }
+
+  /**
+   * Send snapshot to a peer that is behind
+   */
+  private async sendSnapshotToPeer(peerUrl: string): Promise<boolean> {
+    const snapshot = this.logManager.getLatestSnapshot();
+    if (!snapshot) {
+      this.logger.warn(`No snapshot available to send to ${peerUrl}`);
+      return false;
+    }
+
+    const request: InstallSnapshotRequest = {
+      term: this.currentTerm,
+      leaderId: config.node.id,
+      lastIncludedIndex: snapshot.lastIncludedIndex,
+      lastIncludedTerm: snapshot.lastIncludedTerm,
+      data: snapshot.data,
+    };
+
+    try {
+      const response = await this.peerClient.sendInstallSnapshot(
+        `${peerUrl}/api`,
+        request
+      );
+
+      if (response.term > this.currentTerm) {
+        this.becomeFollower(response.term);
+        return false;
+      }
+
+      // Update peer state after successful snapshot install
+      const state = this.peerStates.get(peerUrl);
+      if (state) {
+        state.nextIndex = snapshot.lastIncludedIndex + 1;
+        state.matchIndex = snapshot.lastIncludedIndex;
+      }
+
+      this.logger.info(
+        `Sent snapshot to ${peerUrl} (lastIncludedIndex: ${snapshot.lastIncludedIndex})`
+      );
+      return true;
+    } catch (error) {
+      this.logger.error(
+        `Failed to send snapshot to ${peerUrl}`,
+        error as Error
+      );
+      return false;
     }
   }
 
@@ -482,8 +701,20 @@ export class RaftNode implements IRaftNode {
   getLogs(): any[] {
     const logs = [];
     const commitIndex = this.logManager.getCommitIndex();
+    const firstIndex = this.logManager.getFirstIndex();
     
-    for (let i = 0; i <= commitIndex; i++) {
+    // Add info about snapshot if exists
+    const snapshot = this.logManager.getLatestSnapshot();
+    if (snapshot) {
+      logs.push({
+        type: "snapshot",
+        lastIncludedIndex: snapshot.lastIncludedIndex,
+        lastIncludedTerm: snapshot.lastIncludedTerm,
+        timestamp: snapshot.timestamp,
+      });
+    }
+    
+    for (let i = firstIndex; i <= commitIndex; i++) {
       const entry = this.logManager.getEntry(i);
       if (entry) {
         logs.push({

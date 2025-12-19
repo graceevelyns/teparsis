@@ -37,4 +37,28 @@ export class KVStore implements IKVStore {
   ping(): string {
     return "PONG";
   }
+
+  // Snapshot support
+
+  /**
+   * Get entire state for snapshot
+   */
+  getState(): Record<string, string> {
+    const state: Record<string, string> = {};
+    this.store.forEach((value, key) => {
+      state[key] = value;
+    });
+    return state;
+  }
+
+  /**
+   * Restore state from snapshot
+   */
+  restoreState(state: Record<string, string>): void {
+    this.store.clear();
+    for (const [key, value] of Object.entries(state)) {
+      this.store.set(key, value);
+    }
+  }
 }
+

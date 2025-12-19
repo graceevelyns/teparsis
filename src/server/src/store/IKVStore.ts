@@ -16,4 +16,12 @@ export interface IKVStore {
   
   // Health check method, should return "PONG"
   ping(): string;
+
+  // Snapshot support
+  // Get entire state for snapshot
+  getState(): Record<string, string>;
+  
+  // Restore state from snapshot
+  restoreState(state: Record<string, string>): void;
 }
+

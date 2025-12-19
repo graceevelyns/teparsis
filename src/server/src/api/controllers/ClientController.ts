@@ -259,6 +259,28 @@ export class ClientController {
     }
   };
 
+  /**
+   * Trigger manual snapshot creation
+   */
+  triggerSnapshot = (req: Request, res: Response): void => {
+    if (!this.raftNode.isLeader()) {
+      this.redirectToLeader(res);
+      return;
+    }
+
+    try {
+      const success = this.raftNode.triggerSnapshot();
+      const response: ClientResponse = {
+        success,
+        value: success ? "Snapshot created" : "Snapshot not needed (not enough entries)",
+      };
+      res.json(response);
+    } catch (error) {
+      this.logger.error("Error in TRIGGER_SNAPSHOT operation", error as Error);
+      this.sendError(res, "Internal server error");
+    }
+  };
+
   private redirectToLeader(res: Response): void {
     const response: ClientResponse = {
       success: false,

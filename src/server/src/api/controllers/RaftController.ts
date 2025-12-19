@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { RaftNode } from "../../core/RaftNode";
 import { AppendEntriesRequest, RequestVoteRequest } from "../../types";
+import { InstallSnapshotRequest } from "../../types/Snapshot";
 import { Logger } from "../../utils/Logger";
 
 export class RaftController {
@@ -31,6 +32,17 @@ export class RaftController {
     }
   };
 
+  installSnapshot = (req: Request, res: Response): void => {
+    try {
+      const request: InstallSnapshotRequest = req.body;
+      const response = this.raftNode.processInstallSnapshot(request);
+      res.json(response);
+    } catch (error) {
+      this.logger.error("Error processing InstallSnapshot", error as Error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  };
+
   status = (req: Request, res: Response): void => {
     try {
       const status = {
@@ -47,3 +59,4 @@ export class RaftController {
     }
   };
 }
+

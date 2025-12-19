@@ -6,6 +6,7 @@ import {
   RequestVoteRequest,
   RequestVoteResponse,
 } from "../types";
+import { InstallSnapshotRequest, InstallSnapshotResponse } from "../types/Snapshot";
 import { IPeerClient } from "./IPeerClient";
 import { Logger } from "../utils/Logger";
 
@@ -47,6 +48,25 @@ export class PeerClient implements IPeerClient {
       throw error;
     }
   }
+
+  async sendInstallSnapshot(
+    nodeUrl: string,
+    request: InstallSnapshotRequest
+  ): Promise<InstallSnapshotResponse> {
+    try {
+      return await this.makeHttpRequest<InstallSnapshotResponse>(
+        `${nodeUrl}/raft/install-snapshot`,
+        request
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to send InstallSnapshot to ${nodeUrl}`,
+        error as Error
+      );
+      throw error;
+    }
+  }
+
 
   private async makeHttpRequest<T>(url: string, data: any): Promise<T> {
     return new Promise((resolve, reject) => {

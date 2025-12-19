@@ -8,6 +8,7 @@ import { KVStore } from "./store/KVStore";
 import { LogManager } from "./core/LogManager";
 import { PeerClient } from "./network/PeerClient";
 import { RaftNode } from "./core/RaftNode";
+import { PersistentStorage } from "./core/PersistentStorage";
 import { ClientController } from "./api/controllers/ClientController";
 import { RaftController } from "./api/controllers/RaftController";
 import { createRoutes } from "./api/routes";
@@ -15,6 +16,7 @@ import { createRoutes } from "./api/routes";
 class Application {
   private readonly logger: Logger;
   private readonly store: KVStore;
+  private readonly storage: PersistentStorage;
   private readonly logManager: LogManager;
   private readonly peerClient: PeerClient;
   private readonly raftNode: RaftNode;
@@ -25,16 +27,26 @@ class Application {
   constructor() {
     this.logger = new Logger("RaftNode");
 
+    // Initialize persistent storage
+    this.storage = new PersistentStorage(
+      config.storage.dataDir,
+      config.node.id,
+      this.logger
+    );
+
     this.store = new KVStore();
 
-    this.logManager = new LogManager();
+    // Initialize log manager with persistent storage
+    this.logManager = new LogManager(this.storage);
     this.peerClient = new PeerClient(this.logger);
 
+    // Initialize RaftNode with persistent storage
     this.raftNode = new RaftNode(
       this.store,
       this.logManager,
       this.peerClient,
-      this.logger
+      this.logger,
+      this.storage
     );
 
     this.clientController = new ClientController(

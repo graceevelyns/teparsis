@@ -4,6 +4,7 @@ import {
   RequestVoteRequest,
   RequestVoteResponse,
 } from "../types";
+import { InstallSnapshotRequest, InstallSnapshotResponse } from "../types/Snapshot";
 
 /**
  * Interface for communicating with other Raft nodes
@@ -21,4 +22,11 @@ export interface IPeerClient {
     nodeUrl: string,
     request: RequestVoteRequest
   ): Promise<RequestVoteResponse>;
+
+  // Send InstallSnapshot RPC to another node (for log compaction)
+  sendInstallSnapshot(
+    nodeUrl: string,
+    request: InstallSnapshotRequest
+  ): Promise<InstallSnapshotResponse>;
 }
+

@@ -12,6 +12,10 @@ export interface Config {
     electionTimeoutMax: number;
     heartbeatInterval: number;
   };
+  storage: {
+    dataDir: string;
+    snapshotThreshold: number;
+  };
 }
 
 const config: Config = {
@@ -28,6 +32,11 @@ const config: Config = {
     electionTimeoutMax: 300,
     heartbeatInterval: 50,
   },
+  storage: {
+    dataDir: process.env.DATA_DIR || "/data",
+    snapshotThreshold: parseInt(process.env.SNAPSHOT_THRESHOLD || "100", 10),
+  },
 };
 
 export default config;
+

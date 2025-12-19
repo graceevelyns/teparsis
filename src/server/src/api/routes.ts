@@ -22,10 +22,15 @@ export function createRoutes(handlers: RouteHandlers): Router {
   router.post("/execute", handlers.clientController.execute);
   router.get("/request_log", handlers.clientController.requestLog);
 
+  // Snapshot management
+  router.post("/snapshot", handlers.clientController.triggerSnapshot);
+
   // Raft protocol routes
   router.post("/raft/append-entries", handlers.raftController.appendEntries);
   router.post("/raft/request-vote", handlers.raftController.requestVote);
+  router.post("/raft/install-snapshot", handlers.raftController.installSnapshot);
   router.get("/raft/status", handlers.raftController.status);
 
   return router;
 }
+
