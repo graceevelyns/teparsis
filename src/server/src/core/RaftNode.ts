@@ -601,6 +601,12 @@ export class RaftNode implements IRaftNode {
 
   // Client propose entry to be appended to the log
   private async handlePropose(command: LogCommand): Promise<boolean> {
+
+    if (!this.isActive) {
+      this.logger.warn(`Propose rejected: node is inactive`);
+      return false;
+    }
+
     if (!this.isLeader()) {
       this.logger.warn(`Propose rejected: not a leader`);
       return false;
