@@ -57,8 +57,8 @@ export class ClientController {
     }
 
     try {
-      const success = await this.raftNode.proposeEntry('set', key, value);
-      
+      const success = await this.raftNode.proposeEntry("set", key, value);
+
       if (success) {
         const response: ClientResponse = {
           success: true,
@@ -86,8 +86,8 @@ export class ClientController {
     const deletedValue = this.store.get(key);
 
     try {
-      const success = await this.raftNode.proposeEntry('del', key);
-      
+      const success = await this.raftNode.proposeEntry("del", key);
+
       if (success) {
         const response: ClientResponse = {
           success: true,
@@ -119,8 +119,8 @@ export class ClientController {
     }
 
     try {
-      const success = await this.raftNode.proposeEntry('append', key, value);
-      
+      const success = await this.raftNode.proposeEntry("append", key, value);
+
       if (success) {
         const response: ClientResponse = {
           success: true,
@@ -206,7 +206,11 @@ export class ClientController {
             this.sendError(res, "value is required for SET operation");
             return;
           }
-          const setSuccess = await this.raftNode.proposeEntry('set', key, value);
+          const setSuccess = await this.raftNode.proposeEntry(
+            "set",
+            key,
+            value
+          );
           if (!setSuccess) {
             this.sendError(res, "Failed to reach consensus");
             return;
@@ -217,7 +221,7 @@ export class ClientController {
 
         case "del":
           const delValue = this.store.get(key);
-          const delSuccess = await this.raftNode.proposeEntry('del', key);
+          const delSuccess = await this.raftNode.proposeEntry("del", key);
           if (!delSuccess) {
             this.sendError(res, "Failed to reach consensus");
             return;
@@ -231,7 +235,11 @@ export class ClientController {
             this.sendError(res, "value is required for APPEND operation");
             return;
           }
-          const appendSuccess = await this.raftNode.proposeEntry('append', key, value);
+          const appendSuccess = await this.raftNode.proposeEntry(
+            "append",
+            key,
+            value
+          );
           if (!appendSuccess) {
             this.sendError(res, "Failed to reach consensus");
             return;
@@ -256,7 +264,10 @@ export class ClientController {
       };
       res.json(response);
     } catch (error) {
-      this.logger.error(`Error in EXECUTE operation (${operation})`, error as Error);
+      this.logger.error(
+        `Error in EXECUTE operation (${operation})`,
+        error as Error
+      );
       this.sendError(res, "Internal server error");
     }
   };
@@ -429,12 +440,121 @@ export class ClientController {
     });
   }
 
+  // Membership change operations
+
+  addVoter = async (req: Request, res: Response): Promise<void> => {
+    if (!this.raftNode.isLeader()) {
+      this.redirectToLeader(res);
+      return;
+    }
+
+    const { id, address } = req.body;
+
+    if (!id || !address) {
+      this.sendError(res, "id and address are required");
+      return;
+    }
+
+    try {
+      const result = await this.raftNode.addVoter(id, address);
+
+      if (result.success) {
+        res.json(result);
+      } else {
+        this.sendError(res, result.error || "Failed to add voter");
+      }
+    } catch (error) {
+      this.logger.error("Error adding voter", error as Error);
+      this.sendError(res, "Internal server error");
+    }
+  };
+
+  removePeer = async (req: Request, res: Response): Promise<void> => {
+    if (!this.raftNode.isLeader()) {
+      this.redirectToLeader(res);
+      return;
+    }
+
+    const { id } = req.body;
+
+    if (!id) {
+      this.sendError(res, "id is required");
+      return;
+    }
+
+    try {
+      const result = await this.raftNode.removePeer(id);
+
+      if (result.success) {
+        res.json(result);
+      } else {
+        this.sendError(res, result.error || "Failed to remove peer");
+      }
+    } catch (error) {
+      this.logger.error("Error removing peer", error as Error);
+      this.sendError(res, "Internal server error");
+    }
+  };
+
+  getConfiguration = async (req: Request, res: Response): Promise<void> => {
+    if (!this.raftNode.isLeader()) {
+      this.redirectToLeader(res);
+      return;
+    }
+
+    try {
+      const configuration = await this.raftNode.getConfiguration();
+      const response: ClientResponse = {
+        success: true,
+        value: configuration,
+      };
+      res.json(response);
+    } catch (error) {
+      this.logger.error("Error getting configuration", error as Error);
+      this.sendError(res, "Internal server error");
+    }
+  };
+
+  // Node stop/restart endpoints
+  stopNode = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const result = await this.raftNode.stopNode();
+
+      if (result.success) {
+        res.json(result);
+      } else {
+        this.sendError(res, result.error || "Failed to stop node");
+      }
+    } catch (error) {
+      this.logger.error("Error stopping node", error as Error);
+      this.sendError(res, "Internal server error");
+    }
+  };
+
+  restartNode = async (req: Request, res: Response): Promise<void> => {
+    const { resetState } = req.body;
+
+    try {
+      const result = await this.raftNode.restartNode(resetState === true);
+
+      if (result.success) {
+        res.json(result);
+      } else {
+        this.sendError(res, result.error || "Failed to restart node");
+      }
+    } catch (error) {
+      this.logger.error("Error restarting node", error as Error);
+      this.sendError(res, "Internal server error");
+    }
+  }
+
   private redirectToLeader(res: Response): void {
     const response: ClientResponse = {
       success: false,
       error: "Not the leader",
       isLeader: false,
       leaderId: this.raftNode.getLeaderId(),
+      leaderAddress: this.raftNode.getLeaderAddress(),
     };
     res.status(302).json(response);
   }
