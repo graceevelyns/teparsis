@@ -22,10 +22,18 @@ export class PeerClient implements IPeerClient {
         request
       );
     } catch (error) {
-      this.logger.error(
-        `Failed to send AppendEntries to ${nodeUrl}`,
-        error as Error
-      );
+      // Use debug for timeout errors to reduce log noise
+      const errorMsg = (error as Error).message;
+      if (errorMsg.includes("timeout") || errorMsg.includes("ECONNREFUSED")) {
+        this.logger.debug(
+          `Failed to send AppendEntries to ${nodeUrl}: ${errorMsg}`
+        );
+      } else {
+        this.logger.error(
+          `Failed to send AppendEntries to ${nodeUrl}`,
+          error as Error
+        );
+      }
       throw error;
     }
   }
@@ -40,10 +48,18 @@ export class PeerClient implements IPeerClient {
         request
       );
     } catch (error) {
-      this.logger.error(
-        `Failed to send RequestVote to ${nodeUrl}`,
-        error as Error
-      );
+      // Use debug for timeout errors to reduce log noise
+      const errorMsg = (error as Error).message;
+      if (errorMsg.includes("timeout") || errorMsg.includes("ECONNREFUSED")) {
+        this.logger.debug(
+          `Failed to send RequestVote to ${nodeUrl}: ${errorMsg}`
+        );
+      } else {
+        this.logger.error(
+          `Failed to send RequestVote to ${nodeUrl}`,
+          error as Error
+        );
+      }
       throw error;
     }
   }
